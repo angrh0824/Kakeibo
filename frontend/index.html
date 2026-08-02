@@ -2,28 +2,56 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>次世代家計簿 - ダッシュボード</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="AIレシート解析による次世代家計簿アプリ。スマートフォンでレシートを撮影するだけで、支出を自動分類・可視化します。">
+    <meta name="theme-color" content="#1A1145">
+    <title>次世代家計簿 - AIレシート解析ダッシュボード</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Serif+JP:wght@400;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 </head>
 <body>
-    <aside class="sidebar">
+    <!-- Sidebar Overlay (mobile) -->
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+    <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <h1>📊 家計簿</h1>
-            <p class="subtitle">AIレシート解析</p>
+            <div class="sidebar-brand">
+                <span class="sidebar-logo">📊</span>
+                <div>
+                    <h1>家計簿</h1>
+                    <p class="subtitle">AI Receipt Analytics</p>
+                </div>
+            </div>
         </div>
         <nav class="sidebar-nav">
-            <a href="#" class="nav-item active" data-page="dashboard"><span>📈</span> ダッシュボード</a>
-            <a href="#" class="nav-item" data-page="receipts"><span>🧾</span> レシート一覧</a>
-            <a href="#" class="nav-item" data-page="items"><span>🏷️</span> 商品マスタ</a>
-            <a href="#" class="nav-item" data-page="trends"><span>📉</span> 価格推移</a>
-            <a href="#" class="nav-item" data-page="settings"><span>⚙️</span> 設定</a>
+            <a href="#" class="nav-item active" data-page="dashboard">
+                <span class="nav-icon">📈</span>
+                <span class="nav-label">ダッシュボード</span>
+            </a>
+            <a href="#" class="nav-item" data-page="receipts">
+                <span class="nav-icon">🧾</span>
+                <span class="nav-label">レシート一覧</span>
+            </a>
+            <a href="#" class="nav-item" data-page="items">
+                <span class="nav-icon">🏷️</span>
+                <span class="nav-label">商品マスタ</span>
+            </a>
+            <a href="#" class="nav-item" data-page="trends">
+                <span class="nav-icon">📉</span>
+                <span class="nav-label">価格推移</span>
+            </a>
+            <a href="#" class="nav-item" data-page="settings">
+                <span class="nav-icon">⚙️</span>
+                <span class="nav-label">設定</span>
+            </a>
         </nav>
         <div class="sidebar-footer">
             <div class="user-info">
                 <div class="avatar">👤</div>
-                <div>
+                <div class="user-details">
                     <p class="user-name">ユーザー</p>
                     <p class="user-email">user@example.com</p>
                 </div>
@@ -31,177 +59,221 @@
         </div>
     </aside>
 
-    <main class="main-content">
+    <main class="main-content" id="main-content">
         <header class="topbar">
             <div class="topbar-left">
-                <h2 id="page-title">ダッシュボード</h2>
-                <p id="page-subtitle" class="page-subtitle">2026年8月の支出サマリー</p>
+                <button class="hamburger" id="hamburger-btn" aria-label="メニューを開く">
+                    <span></span><span></span><span></span>
+                </button>
+                <div class="topbar-titles">
+                    <h2 id="page-title">ダッシュボード</h2>
+                    <p id="page-subtitle" class="page-subtitle">支出サマリー</p>
+                </div>
             </div>
             <div class="topbar-right">
-                <button class="btn btn-primary" id="btn-upload"><span>📷</span> レシートを撮影</button>
+                <button class="btn btn-primary btn-glow" id="btn-upload">
+                    <span class="btn-icon-left">📷</span>
+                    <span class="btn-text">レシートを撮影</span>
+                </button>
                 <div class="month-selector">
-                    <button class="btn btn-icon" id="prev-month">◀</button>
+                    <button class="btn btn-icon" id="prev-month" aria-label="前月">◀</button>
                     <span id="current-month">2026年8月</span>
-                    <button class="btn btn-icon" id="next-month">▶</button>
+                    <button class="btn btn-icon" id="next-month" aria-label="次月">▶</button>
                 </div>
             </div>
         </header>
 
+        <!-- ===== Dashboard Page ===== -->
         <section id="page-dashboard" class="page active">
             <div class="kpi-grid">
-                <div class="kpi-card">
-                    <div class="kpi-icon">💰</div>
+                <div class="kpi-card" data-animate="1">
+                    <div class="kpi-icon-wrap"><span class="kpi-icon">💰</span></div>
                     <div class="kpi-info">
                         <p class="kpi-label">今月の支出</p>
-                        <p class="kpi-value" id="kpi-total">¥45,230</p>
-                        <p class="kpi-change positive">▲ 12% 先月比</p>
+                        <p class="kpi-value" id="kpi-total" data-value="0">¥0</p>
+                        <p class="kpi-change" id="kpi-total-change">データなし</p>
                     </div>
                 </div>
-                <div class="kpi-card">
-                    <div class="kpi-icon">🧾</div>
+                <div class="kpi-card" data-animate="2">
+                    <div class="kpi-icon-wrap"><span class="kpi-icon">🧾</span></div>
                     <div class="kpi-info">
                         <p class="kpi-label">レシート数</p>
-                        <p class="kpi-value" id="kpi-receipts">23枚</p>
-                        <p class="kpi-change">今月の記録</p>
+                        <p class="kpi-value" id="kpi-receipts" data-value="0">0枚</p>
+                        <p class="kpi-change" id="kpi-receipts-change">今月の記録</p>
                     </div>
                 </div>
-                <div class="kpi-card">
-                    <div class="kpi-icon">🏷️</div>
+                <div class="kpi-card" data-animate="3">
+                    <div class="kpi-icon-wrap"><span class="kpi-icon">🏷️</span></div>
                     <div class="kpi-info">
                         <p class="kpi-label">購入品目</p>
-                        <p class="kpi-value" id="kpi-items">156点</p>
-                        <p class="kpi-change">名寄せ済み</p>
+                        <p class="kpi-value" id="kpi-items" data-value="0">0点</p>
+                        <p class="kpi-change" id="kpi-items-change">名寄せ済み</p>
                     </div>
                 </div>
-                <div class="kpi-card">
-                    <div class="kpi-icon">📉</div>
+                <div class="kpi-card" data-animate="4">
+                    <div class="kpi-icon-wrap"><span class="kpi-icon">📉</span></div>
                     <div class="kpi-info">
                         <p class="kpi-label">価格上昇率</p>
-                        <p class="kpi-value" id="kpi-inflation">+3.2%</p>
-                        <p class="kpi-change warning">▲ 前年同月比</p>
+                        <p class="kpi-value" id="kpi-inflation" data-value="0">--</p>
+                        <p class="kpi-change" id="kpi-inflation-change">前年同月比</p>
                     </div>
                 </div>
             </div>
 
             <div class="chart-grid">
-                <div class="card">
+                <div class="card glass" data-animate="5">
                     <div class="card-header">
                         <h3>カテゴリ別支出</h3>
                         <span class="badge">今月</span>
                     </div>
-                    <div class="chart-container"><canvas id="category-chart"></canvas></div>
+                    <div class="chart-container" id="category-chart-container">
+                        <canvas id="category-chart"></canvas>
+                    </div>
                 </div>
-                <div class="card">
+                <div class="card glass" data-animate="6">
                     <div class="card-header">
                         <h3>月次支出推移</h3>
                         <span class="badge">6ヶ月</span>
                     </div>
-                    <div class="chart-container"><canvas id="monthly-chart"></canvas></div>
+                    <div class="chart-container" id="monthly-chart-container">
+                        <canvas id="monthly-chart"></canvas>
+                    </div>
                 </div>
             </div>
 
-            <div class="card">
+            <div class="card glass" data-animate="7">
                 <div class="card-header">
                     <h3>最近のレシート</h3>
                     <a href="#" class="link" data-page-link="receipts">すべて見る →</a>
                 </div>
-                <div class="table-container">
-                    <table class="data-table" id="recent-receipts-table">
-                        <thead>
-                            <tr><th>日付</th><th>店舗</th><th>品目数</th><th>合計金額</th><th>ステータス</th></tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
+                <div id="recent-receipts-container">
+                    <div class="table-container">
+                        <table class="data-table" id="recent-receipts-table">
+                            <thead>
+                                <tr>
+                                    <th>日付</th>
+                                    <th>店舗</th>
+                                    <th>品目数</th>
+                                    <th>合計金額</th>
+                                    <th>ステータス</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </section>
 
+        <!-- ===== Receipts Page ===== -->
         <section id="page-receipts" class="page">
-            <div class="card">
+            <div class="card glass">
                 <div class="card-header">
                     <h3>レシート一覧</h3>
                     <div class="filter-bar">
-                        <input type="text" class="search-input" placeholder="店舗名で検索..." id="receipt-search">
-                        <select class="select-input" id="receipt-filter">
+                        <input type="text" class="form-input search-input" placeholder="店舗名で検索..." id="receipt-search">
+                        <select class="form-input select-input" id="receipt-filter">
                             <option value="all">すべて</option>
                             <option value="validated">検証済み</option>
                             <option value="review">要確認</option>
                         </select>
                     </div>
                 </div>
-                <div class="table-container">
-                    <table class="data-table" id="receipts-table">
-                        <thead>
-                            <tr><th>日付</th><th>店舗</th><th>品目数</th><th>合計金額</th><th>信頼度</th><th>ステータス</th><th>操作</th></tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-                <div class="pagination">
-                    <button class="btn btn-icon" disabled>◀</button>
-                    <span>1 / 3</span>
-                    <button class="btn btn-icon">▶</button>
+                <div id="receipts-container">
+                    <div class="table-container">
+                        <table class="data-table" id="receipts-table">
+                            <thead>
+                                <tr>
+                                    <th>日付</th>
+                                    <th>店舗</th>
+                                    <th>品目数</th>
+                                    <th>合計金額</th>
+                                    <th>信頼度</th>
+                                    <th>ステータス</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </section>
 
+        <!-- ===== Items Page ===== -->
         <section id="page-items" class="page">
-            <div class="card">
+            <div class="card glass">
                 <div class="card-header">
                     <h3>商品マスタ</h3>
                     <div class="filter-bar">
-                        <input type="text" class="search-input" placeholder="商品名で検索..." id="item-search">
-                        <select class="select-input" id="item-category-filter">
+                        <input type="text" class="form-input search-input" placeholder="商品名で検索..." id="item-search">
+                        <select class="form-input select-input" id="item-category-filter">
                             <option value="all">全カテゴリ</option>
                             <option value="食費">食費</option>
                             <option value="日用品">日用品</option>
                             <option value="衛生用品">衛生用品</option>
                             <option value="交際費">交際費</option>
+                            <option value="その他">その他</option>
                         </select>
                     </div>
                 </div>
-                <div class="table-container">
-                    <table class="data-table" id="items-table">
-                        <thead>
-                            <tr><th>商品名</th><th>カテゴリ</th><th>表記揺れ数</th><th>平均価格</th><th>購入回数</th><th>操作</th></tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
+                <div id="items-container">
+                    <div class="table-container">
+                        <table class="data-table" id="items-table">
+                            <thead>
+                                <tr>
+                                    <th>商品名</th>
+                                    <th>カテゴリ</th>
+                                    <th>表記揺れ数</th>
+                                    <th>平均価格</th>
+                                    <th>購入回数</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </section>
 
+        <!-- ===== Trends Page ===== -->
         <section id="page-trends" class="page">
-            <div class="card">
+            <div class="card glass">
                 <div class="card-header">
                     <h3>商品の価格推移</h3>
                     <div class="filter-bar">
-                        <select class="select-input" id="trend-item-select">
+                        <select class="form-input select-input" id="trend-item-select">
                             <option value="">商品を選択...</option>
                         </select>
                     </div>
                 </div>
-                <div class="chart-container large"><canvas id="price-trend-chart"></canvas></div>
+                <div id="trends-chart-container">
+                    <div class="chart-container large">
+                        <canvas id="price-trend-chart"></canvas>
+                    </div>
+                </div>
                 <div class="trend-stats" id="trend-stats"></div>
             </div>
         </section>
 
+        <!-- ===== Settings Page ===== -->
         <section id="page-settings" class="page">
             <div class="settings-grid">
-                <div class="card">
+                <div class="card glass">
                     <div class="card-header"><h3>カテゴリ設定</h3></div>
                     <div class="settings-list" id="category-settings"></div>
                 </div>
-                <div class="card">
+                <div class="card glass">
                     <div class="card-header"><h3>AI解析設定</h3></div>
                     <div class="settings-form">
                         <div class="form-group">
                             <label>モデル</label>
-                            <select class="select-input"><option>gemma-4-31b-it</option></select>
+                            <select class="form-input select-input"><option>gemma-4-31b-it</option></select>
                         </div>
                         <div class="form-group">
                             <label>OCRエンジン</label>
-                            <select class="select-input">
+                            <select class="form-input select-input">
                                 <option>Google Vision API</option>
                                 <option>Tesseract 5</option>
                             </select>
@@ -209,8 +281,8 @@
                         <div class="form-group">
                             <label>名寄せ精度</label>
                             <div class="slider-container">
-                                <input type="range" min="0.7" max="0.95" step="0.01" value="0.85" class="slider">
-                                <span class="slider-value">0.85</span>
+                                <input type="range" min="0.7" max="0.95" step="0.01" value="0.85" class="slider" id="accuracy-slider">
+                                <span class="slider-value" id="accuracy-value">0.85</span>
                             </div>
                         </div>
                         <button class="btn btn-primary">設定を保存</button>
@@ -220,32 +292,143 @@
         </section>
     </main>
 
-    <div class="modal-overlay" id="upload-modal">
-        <div class="modal">
+    <!-- ===== Receipt Upload & Review Modal ===== -->
+    <div class="modal-overlay" id="receipt-modal">
+        <div class="modal modal-review">
             <div class="modal-header">
-                <h3>レシートをアップロード</h3>
-                <button class="btn btn-icon" id="close-modal">✕</button>
+                <h3 id="modal-title">レシートをアップロード</h3>
+                <button class="btn btn-icon modal-close" id="close-modal" aria-label="閉じる">✕</button>
             </div>
+
+            <!-- Step Indicator -->
+            <div class="step-indicator" id="step-indicator">
+                <div class="step active" data-step="1">
+                    <div class="step-circle">1</div>
+                    <span class="step-label">アップロード</span>
+                </div>
+                <div class="step-line"></div>
+                <div class="step" data-step="2">
+                    <div class="step-circle">2</div>
+                    <span class="step-label">AI解析</span>
+                </div>
+                <div class="step-line"></div>
+                <div class="step" data-step="3">
+                    <div class="step-circle">3</div>
+                    <span class="step-label">確認・修正</span>
+                </div>
+            </div>
+
             <div class="modal-body">
-                <div class="upload-zone" id="upload-zone">
-                    <div class="upload-icon">📷</div>
-                    <p>画像をドラッグ&ドロップ</p>
-                    <p class="upload-hint">または</p>
-                    <button class="btn btn-secondary" id="btn-select-file">ファイルを選択</button>
-                    <input type="file" id="file-input" accept="image/*" multiple hidden>
+                <!-- Step 1: Upload -->
+                <div class="modal-step active" id="step-upload">
+                    <div class="upload-zone" id="upload-zone">
+                        <div class="upload-icon-large">📷</div>
+                        <p class="upload-title">レシート画像をアップロード</p>
+                        <p class="upload-hint">ドラッグ&ドロップ、またはタップして選択</p>
+                        <button class="btn btn-secondary" id="btn-select-file">ファイルを選択</button>
+                        <input type="file" id="file-input" accept="image/*" capture="environment" hidden>
+                        <p class="upload-note">📱 スマホではカメラが直接起動します</p>
+                    </div>
                 </div>
-                <div class="upload-progress" id="upload-progress" style="display:none;">
-                    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-                    <p id="progress-text">アップロード中...</p>
+
+                <!-- Step 2: AI Analysis Progress -->
+                <div class="modal-step" id="step-progress">
+                    <div class="analysis-progress">
+                        <div class="analysis-visual">
+                            <div class="analysis-spinner"></div>
+                            <p class="analysis-status" id="analysis-status">解析を開始しています...</p>
+                        </div>
+                        <div class="analysis-steps">
+                            <div class="analysis-step-item" id="a-step-ocr">
+                                <div class="a-step-icon">🔍</div>
+                                <div class="a-step-info">
+                                    <p class="a-step-label">OCR文字認識</p>
+                                    <div class="progress-bar"><div class="progress-fill" id="ocr-progress"></div></div>
+                                </div>
+                                <span class="a-step-status">待機中</span>
+                            </div>
+                            <div class="analysis-step-item" id="a-step-parse">
+                                <div class="a-step-icon">🤖</div>
+                                <div class="a-step-info">
+                                    <p class="a-step-label">AI構造化解析</p>
+                                    <div class="progress-bar"><div class="progress-fill" id="parse-progress"></div></div>
+                                </div>
+                                <span class="a-step-status">待機中</span>
+                            </div>
+                            <div class="analysis-step-item" id="a-step-classify">
+                                <div class="a-step-icon">🏷️</div>
+                                <div class="a-step-info">
+                                    <p class="a-step-label">カテゴリ分類</p>
+                                    <div class="progress-bar"><div class="progress-fill" id="classify-progress"></div></div>
+                                </div>
+                                <span class="a-step-status">待機中</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="upload-result" id="upload-result" style="display:none;">
-                    <div class="result-icon">✅</div>
-                    <p id="result-text">解析が完了しました</p>
-                    <div class="result-details" id="result-details"></div>
+
+                <!-- Step 3: Review & Edit -->
+                <div class="modal-step" id="step-review">
+                    <div class="review-form" id="review-form">
+                        <div class="review-meta-grid">
+                            <div class="form-group">
+                                <label for="review-store">店舗名</label>
+                                <input type="text" class="form-input" id="review-store" placeholder="店舗名">
+                            </div>
+                            <div class="form-group">
+                                <label for="review-date">日時</label>
+                                <input type="datetime-local" class="form-input" id="review-date">
+                            </div>
+                            <div class="form-group">
+                                <label>信頼度</label>
+                                <div class="confidence-display" id="review-confidence">
+                                    <div class="confidence-bar-lg">
+                                        <div class="confidence-fill-lg" id="confidence-fill-lg"></div>
+                                    </div>
+                                    <span class="confidence-pct" id="confidence-pct">--%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="review-items-section">
+                            <div class="review-items-header">
+                                <h4>購入品目</h4>
+                                <button class="btn btn-secondary btn-sm" id="btn-add-item" type="button">＋ 品目を追加</button>
+                            </div>
+                            <div class="review-items-scroll">
+                                <table class="review-items-table" id="review-items-table">
+                                    <thead>
+                                        <tr>
+                                            <th>品名</th>
+                                            <th class="col-price">単価</th>
+                                            <th class="col-qty">数量</th>
+                                            <th class="col-category">カテゴリ</th>
+                                            <th class="col-subtotal">小計</th>
+                                            <th class="col-action"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="review-items-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="review-total-bar">
+                            <span class="review-total-label">合計金額</span>
+                            <span class="review-total-value" id="review-total">¥0</span>
+                        </div>
+                    </div>
                 </div>
+            </div>
+
+            <div class="modal-footer" id="modal-footer">
+                <button class="btn btn-secondary" id="btn-modal-cancel">キャンセル</button>
+                <button class="btn btn-primary btn-glow" id="btn-modal-approve" style="display:none;">✓ 承認して登録</button>
             </div>
         </div>
     </div>
+
+    <!-- Toast Notification Container -->
+    <div class="toast-container" id="toast-container"></div>
 
     <script src="js/app.js"></script>
 </body>
