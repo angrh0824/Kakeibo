@@ -760,7 +760,7 @@ function initUploadModal() {
         ocrStep.classList.add('active');
         ocrStep.querySelector('.a-step-status').textContent = '処理中...';
         status.textContent = 'OCR文字認識を実行中...';
-        animateProgress(ocrProgress, 1200, () => {
+        animateProgress(ocrProgress, 1000, async () => {
             ocrStep.classList.remove('active');
             ocrStep.classList.add('completed');
             ocrStep.querySelector('.a-step-status').textContent = '完了 ✓';
@@ -769,7 +769,7 @@ function initUploadModal() {
             parseStep.classList.add('active');
             parseStep.querySelector('.a-step-status').textContent = '処理中...';
             status.textContent = 'AI構造化解析中...';
-            animateProgress(parseProgress, 1200, () => {
+            animateProgress(parseProgress, 1000, async () => {
                 parseStep.classList.remove('active');
                 parseStep.classList.add('completed');
                 parseStep.querySelector('.a-step-status').textContent = '完了 ✓';
@@ -778,17 +778,37 @@ function initUploadModal() {
                 classifyStep.classList.add('active');
                 classifyStep.querySelector('.a-step-status').textContent = '処理中...';
                 status.textContent = 'カテゴリ分類中...';
-                animateProgress(classifyProgress, 800, () => {
+                
+                // バックエンドAPIの呼び出し試行
+                let resultData = null;
+                try {
+                    const formData = new FormData();
+                    formData.append('file', files[0]);
+                    const res = await fetch('http://localhost:8000/api/receipts/analyze', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    if (res.ok) {
+                        const resJson = await res.json();
+                        if (resJson.success && resJson.data) {
+                            resultData = resJson.data;
+                        }
+                    }
+                } catch (e) {
+                    console.log('バックエンド未起動のためローカルシミュレーションを実行します:', e);
+                }
+
+                animateProgress(classifyProgress, 600, () => {
                     classifyStep.classList.remove('active');
                     classifyStep.classList.add('completed');
                     classifyStep.querySelector('.a-step-status').textContent = '完了 ✓';
                     status.textContent = '解析完了！';
 
                     setTimeout(() => {
-                        const result = generateSimulatedResult();
+                        const result = resultData || generateSimulatedResult();
                         showReviewForm(result);
                         goToStep(3);
-                    }, 500);
+                    }, 400);
                 });
             });
         });
