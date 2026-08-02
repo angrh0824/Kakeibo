@@ -1,0 +1,18 @@
+# 環境変数・機密情報（絶対にコミット禁止）
+.env
+*.env
+backend/.env
+
+# Python 関連キャッシュ
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# OS / エディタ 関連
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

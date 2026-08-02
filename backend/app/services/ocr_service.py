@@ -1,6 +1,5 @@
 import os
 import logging
-from typing import str
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ async def extract_text_from_image(image_bytes: bytes) -> str:
 
     # デモ・フォールバック用ダミーテキスト
     logger.info("OCR処理完了 (フォールバックテキスト使用)")
-    return """
+    return r"""
     マルエイストア 秋葉原店
     2026/08/02 18:30
     レシートNo. 12345
