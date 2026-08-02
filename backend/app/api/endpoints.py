@@ -1,6 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from app.services.ocr_service import extract_text_from_image
-from app.services.ai_service import analyze_receipt_text
+from app.services.ai_service import analyze_receipt_image
 import logging
 
 logger = logging.getLogger(__name__)
@@ -9,20 +8,17 @@ router = APIRouter()
 @router.post("/receipts/analyze")
 async def analyze_receipt(file: UploadFile = File(...)):
     """
-    レシート画像を受け取り、OCRテキスト認識とGemma AI構造化を順に実行して
-    Human-in-the-loop確認フォーム用のJSON結果を返却します。
+    レシート画像を受け取り、Gemma マルチモーダル AI で画像から直接店舗名・日付・品目・合計を抽出します。
     """
-    if not file.content_type.startswith("image/"):
+    content_type = file.content_type or "image/jpeg"
+    if not content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="画像ファイル(PNG/JPEG)をアップロードしてください。")
 
     try:
         image_bytes = await file.read()
         
-        # 1. OCR 文字認識
-        ocr_text = await extract_text_from_image(image_bytes)
-        
-        # 2. Gemma AI 構造化データ抽出
-        result = await analyze_receipt_text(ocr_text)
+        # マルチモーダル AI 直接画像解析
+        result = await analyze_receipt_image(image_bytes, content_type=content_type)
         
         return {
             "success": True,
@@ -30,7 +26,7 @@ async def analyze_receipt(file: UploadFile = File(...)):
             "data": result
         }
     except Exception as e:
-        logger.error(f"レシート解析中にエラー発生: {e}")
+        logger.error(f"レシート画像解析エラー: {e}")
         raise HTTPException(status_code=500, detail=f"解析エラー: {str(e)}")
 
 @router.get("/health")
