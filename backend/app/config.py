@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     
     OPENROUTER_API_KEY: str = ""
     DEFAULT_AI_MODEL: str = "google/gemma-4-31b-it"
+    FIRESTORE_DATABASE: str = "(default)"
     GCS_BUCKET_NAME: str = ""
     GCS_RECEIPT_PREFIX: str = "receipts"
     GCS_SIGNED_URL_TTL_SECONDS: int = 900

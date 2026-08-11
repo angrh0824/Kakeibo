@@ -23,7 +23,7 @@
             <div class="auth-mark" aria-hidden="true">家</div>
             <p class="auth-eyebrow">PRIVATE FAMILY FINANCE</p>
             <h1>家族の家計簿へログイン</h1>
-            <p class="auth-description">許可されたGoogleアカウントだけが、レシート解析を利用できます。</p>
+            <p class="auth-description">許可されたGoogleアカウントだけが、家族共通のレシート・商品情報・画像を利用できます。</p>
             <div class="google-signin-button" id="google-signin-button"></div>
             <p class="auth-error" id="auth-error" hidden></p>
             <p class="auth-note">パスワードをこのサイトへ保存することはありません。</p>
@@ -307,14 +307,13 @@
                 </div>
             </div>
             <div class="card glass data-safety-card">
-                <div class="card-header"><h3>&#12487;&#12540;&#12479;&#20445;&#20840;</h3><span class="badge">LOCAL SAFE</span></div>
-                <p class="data-safety-copy">&#12371;&#12398;&#31471;&#26411;&#12395;&#33258;&#21205;&#20445;&#23384;&#12375;&#12414;&#12377;&#12290;&#31471;&#26411;&#22793;&#26356;&#26178;&#12399;&#12496;&#12483;&#12463;&#12450;&#12483;&#12503;&#12434;&#12362;&#12392;&#12426;&#12367;&#12384;&#12373;&#12356;&#12290;</p>
+                <div class="card-header"><h3>家族共有Data</h3><span class="badge">CLOUD SYNC</span></div>
+                <p class="data-safety-copy">許可された家族全員が、Google Cloud上の同じレシート・商品情報・画像を利用します。</p>
                 <div class="data-safety-actions">
-                    <button class="btn btn-secondary" id="btn-export-data" type="button">&#12496;&#12483;&#12463;&#12450;&#12483;&#12503;&#12434;&#26360;&#12365;&#20986;&#12377;</button>
-                    <button class="btn btn-primary" id="btn-import-data" type="button">&#12496;&#12483;&#12463;&#12450;&#12483;&#12503;&#12434;&#24489;&#20803;</button>
-                    <input type="file" id="data-import-input" accept="application/json,.json" hidden>
+                    <button class="btn btn-secondary" id="btn-export-data" type="button">バックアップを書き出す</button>
+                    <button class="btn btn-primary" id="btn-sync-data" type="button">今すぐ同期</button>
                 </div>
-                <p class="storage-status" id="storage-status">&#33258;&#21205;&#20445;&#23384;&#29366;&#24907;&#12434;&#30906;&#35469;&#20013;...</p>
+                <p class="storage-status" id="storage-status">Google Cloud共有データを確認中...</p>
             </div>
         </section>
     </main>
@@ -473,6 +472,7 @@
     <div class="toast-container" id="toast-container"></div>
 
     <script src="js/auth.js"></script>
+    <script src="js/shared-data.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

@@ -165,6 +165,7 @@
         signOut?.addEventListener('click', () => {
             clearSession();
             window.google?.accounts?.id?.disableAutoSelect();
+            window.dispatchEvent(new CustomEvent('kakeibo:signed-out'));
             showGate('ログアウトしました。');
         });
 
@@ -183,6 +184,7 @@
         try {
             const user = await validateToken(token);
             hideGate(user);
+            window.dispatchEvent(new CustomEvent('kakeibo:authenticated', { detail: user }));
         } catch (_) {
             clearSession();
             showGate('ログインの有効期限が切れました。もう一度ログインしてください。');

@@ -1,5 +1,5 @@
-const STORAGE_KEY = 'kakeibo.appData.v1';
-const STORAGE_FORMAT_VERSION = 1;
+const LEGACY_STORAGE_KEY = 'kakeibo.appData.v1';
+const SHARED_SYNC_STALE_MS = 15000;
 
 // ===== アプリデータ（永続保存対応） =====
 const appData = {
@@ -18,6 +18,9 @@ let currentPage = 'dashboard';
 let currentMonth = new Date();
 let charts = {};
 let reviewItems = [];
+let lastSharedSyncAt = 0;
+let sharedSyncPromise = null;
+let detailImageObjectUrl = '';
 
 if (typeof Chart !== 'undefined') {
     Chart.defaults.color = '#AEB5C3';
@@ -98,112 +101,111 @@ function normalizePersistedReceipt(receipt, index) {
     };
 }
 
-function makePersistenceEnvelope() {
+function makeDataSnapshot() {
     return {
-        schemaVersion: STORAGE_FORMAT_VERSION,
-        updatedAt: new Date().toISOString(),
+        schemaVersion: 2,
+        source: 'google-cloud-firestore',
+        exportedAt: new Date().toISOString(),
         receipts: appData.receipts,
         categories: appData.categories
     };
 }
 
-function applyPersistedData(candidate) {
+function applySharedData(candidate) {
     const source = Array.isArray(candidate) ? { receipts: candidate } : candidate;
     if (!source || !Array.isArray(source.receipts)) return false;
     const receipts = source.receipts.map(normalizePersistedReceipt).filter(Boolean);
-    const categories = Array.isArray(source.categories)
-        ? source.categories.filter(category => category && category.name).map(category => ({
-            name: String(category.name),
-            color: String(category.color || '#8893A5')
-        }))
-        : [];
-
     appData.receipts.splice(0, appData.receipts.length, ...receipts);
-    if (categories.length > 0) appData.categories.splice(0, appData.categories.length, ...categories);
     return true;
 }
 
-function updateStorageStatus() {
+function clearLegacyLocalData() {
+    try {
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+        localStorage.removeItem(`${LEGACY_STORAGE_KEY}.pre-import`);
+    } catch (error) {
+        console.warn('旧端末データを削除できませんでした。', error);
+    }
+}
+
+function updateStorageStatus(message = '') {
     const status = document.getElementById('storage-status');
     if (!status) return;
-    try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) {
-            status.textContent = '自動保存はまだありません';
-            return;
+    if (message) {
+        status.textContent = message;
+        return;
+    }
+    if (!lastSharedSyncAt) {
+        status.textContent = 'Google Cloud共有データを読み込み中...';
+        return;
+    }
+    const savedAt = new Date(lastSharedSyncAt).toLocaleString('ja-JP');
+    status.textContent = `家族共有クラウド：${appData.receipts.length}件 / 最終同期 ${savedAt}`;
+}
+
+function renderCurrentPage() {
+    navigateTo(currentPage);
+}
+
+async function loadSharedData({ announce = false, force = false } = {}) {
+    if (!window.KakeiboShared) return false;
+    if (window.KakeiboAuth?.enabled && !window.KakeiboAuth.getToken()) return false;
+    if (sharedSyncPromise) return sharedSyncPromise;
+
+    updateStorageStatus('Google Cloud共有データを同期中...');
+    sharedSyncPromise = (async () => {
+        try {
+            const payload = await window.KakeiboShared.requestJson('/receipts');
+            if (!applySharedData(payload)) throw new Error('共有データの形式が不正です。');
+            clearLegacyLocalData();
+            lastSharedSyncAt = Date.now();
+            updateStorageStatus();
+            renderCurrentPage();
+            if (announce) showToast(`${appData.receipts.length}件の共有Dataを同期しました`, '☁️');
+            return true;
+        } catch (error) {
+            console.error('共有データの同期に失敗しました。', error);
+            updateStorageStatus('共有データを同期できませんでした');
+            if (announce) showToast(error instanceof Error ? error.message : '共有データを同期できませんでした', '⚠️');
+            return false;
+        } finally {
+            sharedSyncPromise = null;
         }
-        const envelope = JSON.parse(raw);
-        const savedAt = envelope.updatedAt ? new Date(envelope.updatedAt).toLocaleString('ja-JP') : '時刻不明';
-        status.textContent = `この端末に自動保存済み：${appData.receipts.length}件 / ${savedAt}`;
-    } catch (error) {
-        status.textContent = '保存状態を確認できません';
+    })();
+    return sharedSyncPromise;
+}
+
+function refreshSharedDataIfStale() {
+    if (Date.now() - lastSharedSyncAt >= SHARED_SYNC_STALE_MS) {
+        loadSharedData();
     }
 }
 
-function loadPersistedData() {
-    try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return false;
-        const parsed = JSON.parse(raw);
-        return applyPersistedData(parsed);
-    } catch (error) {
-        console.warn('保存済みデータを読み込めませんでした。現在のデータは変更していません。', error);
-        return false;
-    }
-}
-
-function savePersistedData() {
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(makePersistenceEnvelope()));
-        updateStorageStatus();
-        return true;
-    } catch (error) {
-        console.error('データの自動保存に失敗しました。', error);
-        showToast('自動保存に失敗しました。バックアップを書き出してください', '⚠️');
-        return false;
-    }
+function clearInMemoryData() {
+    appData.receipts.splice(0, appData.receipts.length);
+    lastSharedSyncAt = 0;
+    renderCurrentPage();
+    updateStorageStatus('ログインすると家族共有データを読み込みます');
 }
 
 function downloadDataBackup() {
-    const blob = new Blob([JSON.stringify(makePersistenceEnvelope(), null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(makeDataSnapshot(), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     const date = new Date().toISOString().slice(0, 10);
     link.href = url;
-    link.download = `kakeibo-backup-${date}.json`;
+    link.download = `kakeibo-cloud-backup-${date}.json`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    showToast('バックアップを書き出しました', '✓');
+    showToast('共有Dataのバックアップを書き出しました', '✓');
 }
 
 function initDataSafety() {
-    const exportButton = document.getElementById('btn-export-data');
-    const importButton = document.getElementById('btn-import-data');
-    const importInput = document.getElementById('data-import-input');
-    exportButton?.addEventListener('click', downloadDataBackup);
-    importButton?.addEventListener('click', () => importInput?.click());
-    importInput?.addEventListener('change', async event => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-        try {
-            const imported = JSON.parse(await file.text());
-            if (!Array.isArray(imported?.receipts)) throw new Error('バックアップ形式が不正です');
-            const count = imported.receipts.length;
-            if (!window.confirm(`${count}件のレシートで現在のDataを置き換えます。続行しますか？`)) return;
-            localStorage.setItem(`${STORAGE_KEY}.pre-import`, JSON.stringify(makePersistenceEnvelope()));
-            if (!applyPersistedData(imported)) throw new Error('データを復元できませんでした');
-            savePersistedData();
-            navigateTo(currentPage);
-            showToast(`${appData.receipts.length}件のDataを復元しました`, '✓');
-        } catch (error) {
-            console.error('バックアップの復元に失敗しました。', error);
-            showToast('バックアップを復元できませんでした', '⚠️');
-        } finally {
-            event.target.value = '';
-        }
-    });
+    clearLegacyLocalData();
+    document.getElementById('btn-export-data')?.addEventListener('click', downloadDataBackup);
+    document.getElementById('btn-sync-data')?.addEventListener('click', () => loadSharedData({ announce: true, force: true }));
     updateStorageStatus();
 }
 function closeDetailModal() {
@@ -211,6 +213,10 @@ function closeDetailModal() {
     if (!modal) return;
     modal.classList.remove('active');
     modal.setAttribute('aria-hidden', 'true');
+    if (detailImageObjectUrl) {
+        URL.revokeObjectURL(detailImageObjectUrl);
+        detailImageObjectUrl = '';
+    }
 }
 
 function showDetailModal(title, bodyHtml, onOpen) {
@@ -251,6 +257,17 @@ function openReceiptDetails(receipt) {
             </tr>
         `).join('')
         : '<tr><td colspan="4">購入品目がありません</td></tr>';
+    const hasImage = Boolean(receipt.image_storage?.object_name);
+    const imagePanel = hasImage ? `
+        <div class="detail-section-title">レシート画像</div>
+        <div class="receipt-image-viewer">
+            <div class="receipt-image-loading" data-receipt-image-loading>非公開画像を読み込み中...</div>
+            <img data-receipt-image alt="${escapeHtml(receipt.store || 'レシート')}のレシート画像" hidden>
+        </div>
+    ` : `
+        <div class="detail-section-title">レシート画像</div>
+        <div class="receipt-image-empty">このレシートには保存画像がありません</div>
+    `;
 
     showDetailModal(`${receipt.store || 'レシート'}の詳細`, `
         <div class="detail-meta-grid">
@@ -261,12 +278,33 @@ function openReceiptDetails(receipt) {
             <div class="detail-meta-card"><div class="detail-meta-label">信頼度</div><div class="detail-meta-value">${Math.round(Math.max(0, Math.min(1, Number(receipt.confidence) || 0)) * 100)}%</div></div>
             <div class="detail-meta-card"><div class="detail-meta-label">ステータス</div><div class="detail-meta-value">${getStatusBadge(receipt.status)}</div></div>
         </div>
+        ${imagePanel}
         <div class="detail-section-title">購入品目（${items.length}点）</div>
         <table class="detail-items-table">
             <thead><tr><th>品名</th><th>数量</th><th>単価</th><th>小計</th></tr></thead>
             <tbody>${rows}</tbody>
         </table>
-    `);
+    `, async body => {
+        if (!hasImage) return;
+        const loading = body.querySelector('[data-receipt-image-loading]');
+        const image = body.querySelector('[data-receipt-image]');
+        try {
+            const response = await window.KakeiboShared.request(`/receipts/${encodeURIComponent(receipt.id)}/image`);
+            if (!response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                throw new Error(payload.detail || 'レシート画像を読み込めませんでした。');
+            }
+            const blob = await response.blob();
+            if (detailImageObjectUrl) URL.revokeObjectURL(detailImageObjectUrl);
+            detailImageObjectUrl = URL.createObjectURL(blob);
+            image.src = detailImageObjectUrl;
+            image.hidden = false;
+            loading.hidden = true;
+        } catch (error) {
+            loading.textContent = error instanceof Error ? error.message : 'レシート画像を読み込めませんでした。';
+            loading.classList.add('error');
+        }
+    });
 }
 
 function openItemDetails(item) {
@@ -307,12 +345,13 @@ function openItemEditor(item) {
                 <label for="detail-item-category">カテゴリ</label>
                 <select class="form-input" id="detail-item-category" name="category">${categoryOptions}</select>
             </div>
-            <div class="form-actions"><button class="btn btn-primary" type="submit">保存</button></div>
+            <div class="form-actions"><button class="btn btn-primary" type="submit">共有Dataへ保存</button></div>
         </form>
     `, body => {
-        body.querySelector('#item-edit-form')?.addEventListener('submit', event => {
+        body.querySelector('#item-edit-form')?.addEventListener('submit', async event => {
             event.preventDefault();
             const form = event.currentTarget;
+            const submitButton = form.querySelector('button[type="submit"]');
             const name = form.elements.name.value.trim();
             const category = form.elements.category.value;
             if (!name) {
@@ -320,16 +359,23 @@ function openItemEditor(item) {
                 return;
             }
 
-            appData.receipts.forEach(receipt => receipt.items.forEach(receiptItem => {
-                if (receiptItem.name === item.name) {
-                    receiptItem.name = name;
-                    receiptItem.category = category;
-                }
-            }));
-            savePersistedData();
-            closeDetailModal();
-            showToast(`${name}の商品情報を更新しました`);
-            navigateTo('items');
+            submitButton.disabled = true;
+            submitButton.textContent = '保存中...';
+            try {
+                await window.KakeiboShared.requestJson('/items/master', {
+                    method: 'PATCH',
+                    body: JSON.stringify({ old_name: item.name, new_name: name, category })
+                });
+                await loadSharedData({ force: true });
+                closeDetailModal();
+                showToast(`${name}の商品情報を家族共有Dataへ更新しました`);
+                navigateTo('items');
+            } catch (error) {
+                console.error('商品マスタ更新に失敗しました。', error);
+                showToast(error instanceof Error ? error.message : '商品マスタを更新できませんでした', '⚠️');
+                submitButton.disabled = false;
+                submitButton.textContent = '共有Dataへ保存';
+            }
         });
     });
 }
@@ -1025,7 +1071,7 @@ function initUploadModal() {
 
     closeBtn.addEventListener('click', closeModal);
 
-    function discardEditingReceipt() {
+    async function discardEditingReceipt() {
         if (!editingReceiptId) {
             closeModal();
             return;
@@ -1038,11 +1084,23 @@ function initUploadModal() {
         }
 
         const removed = appData.receipts[index];
-        appData.receipts.splice(index, 1);
-        savePersistedData();
-        closeModal();
-        showToast(`${removed.store || '\u30ec\u30b7\u30fc\u30c8'}\u306e\u30ec\u30b7\u30fc\u30c8\u3092\u7834\u68c4\u3057\u307e\u3057\u305f`, '\u2713');
-        navigateTo('receipts');
+        if (!window.confirm(`${removed.store || 'レシート'}の共有レシートを削除します。この操作は家族全員の画面に反映されます。`)) return;
+
+        cancelBtn.disabled = true;
+        try {
+            await window.KakeiboShared.requestJson(`/receipts/${encodeURIComponent(editingReceiptId)}`, { method: 'DELETE' });
+            appData.receipts.splice(index, 1);
+            lastSharedSyncAt = Date.now();
+            closeModal();
+            updateStorageStatus();
+            showToast(`${removed.store || 'レシート'}のレシートを共有Dataから破棄しました`, '✓');
+            navigateTo('receipts');
+        } catch (error) {
+            console.error('共有レシートの削除に失敗しました。', error);
+            showToast(error instanceof Error ? error.message : 'レシートを削除できませんでした', '⚠️');
+        } finally {
+            cancelBtn.disabled = false;
+        }
     }
 
     cancelBtn.addEventListener('click', () => {
@@ -1387,8 +1445,8 @@ function initUploadModal() {
         if (lastInput) lastInput.focus();
     });
 
-    // 承認して登録
-    approveBtn.addEventListener('click', () => {
+    // 承認して家族共有Dataへ登録
+    approveBtn.addEventListener('click', async () => {
         const store = document.getElementById('review-store').value.trim();
         const date = document.getElementById('review-date').value;
 
@@ -1401,12 +1459,10 @@ function initUploadModal() {
             return;
         }
 
-        const total = reviewItems.reduce((s, item) => s + getItemLineTotal(item), 0);
-
+        const total = reviewItems.reduce((sum, item) => sum + getItemLineTotal(item), 0);
         const receipt = {
-            id: editingReceiptId || generateId(),
             date: date || new Date().toISOString(),
-            store: store,
+            store,
             source_filename: reviewQueue[currentReviewIndex]?.source_filename || '',
             image_storage: reviewQueue[currentReviewIndex]?.image_storage || null,
             items: reviewItems.map(item => ({
@@ -1416,37 +1472,60 @@ function initUploadModal() {
                 category: item.category,
                 line_total: getItemLineTotal(item)
             })),
-            total: total,
+            total,
             confidence: parseFloat(document.getElementById('confidence-pct').textContent) / 100 || 0.9,
             status: 'validated'
         };
 
-        if (editingReceiptId) {
-            const existing = appData.receipts.find(item => String(item.id) === String(editingReceiptId));
-            if (existing) Object.assign(existing, receipt);
-            else appData.receipts.push(receipt);
-            savePersistedData();
-            editingReceiptId = null;
+        approveBtn.disabled = true;
+        approveBtn.textContent = editingReceiptId ? '更新中...' : '登録中...';
+        try {
+            if (editingReceiptId) {
+                const payload = await window.KakeiboShared.requestJson(`/receipts/${encodeURIComponent(editingReceiptId)}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(receipt)
+                });
+                const saved = normalizePersistedReceipt(payload.receipt, 0);
+                const existingIndex = appData.receipts.findIndex(item => String(item.id) === String(editingReceiptId));
+                if (existingIndex >= 0) appData.receipts.splice(existingIndex, 1, saved);
+                else appData.receipts.push(saved);
+                lastSharedSyncAt = Date.now();
+                editingReceiptId = null;
+                closeModal();
+                updateStorageStatus();
+                showToast(`${store}のレシートを家族共有Dataへ更新しました`);
+                navigateTo('receipts');
+                return;
+            }
+
+            const payload = await window.KakeiboShared.requestJson('/receipts', {
+                method: 'POST',
+                body: JSON.stringify(receipt)
+            });
+            const saved = normalizePersistedReceipt(payload.receipt, appData.receipts.length);
+            appData.receipts.push(saved);
+            lastSharedSyncAt = Date.now();
+            updateStorageStatus();
+            registeredReceiptCount += 1;
+            if (currentReviewIndex < reviewQueue.length - 1) {
+                currentReviewIndex += 1;
+                showReviewForm(reviewQueue[currentReviewIndex]);
+                approveBtn.disabled = false;
+                approveBtn.textContent = '✓ 承認して登録';
+                showToast(`${store}のレシートを共有登録しました。次のレシートを確認してください`);
+                return;
+            }
+
+            const totalRegistered = registeredReceiptCount;
             closeModal();
-            showToast(`${store}のレシートを更新しました`);
-            navigateTo('receipts');
-            return;
+            showToast(`${totalRegistered}件のレシートを家族共有Dataへ登録しました`);
+            navigateTo(currentPage);
+        } catch (error) {
+            console.error('共有レシートの保存に失敗しました。', error);
+            showToast(error instanceof Error ? error.message : '共有レシートを保存できませんでした', '⚠️');
+            approveBtn.disabled = false;
+            approveBtn.textContent = editingReceiptId ? '✓ 更新を保存' : '✓ 承認して登録';
         }
-
-        appData.receipts.push(receipt);
-        savePersistedData();
-        registeredReceiptCount += 1;
-        if (currentReviewIndex < reviewQueue.length - 1) {
-            currentReviewIndex += 1;
-            showReviewForm(reviewQueue[currentReviewIndex]);
-            showToast(`${store}のレシートを登録しました。次のレシートを確認してください`);
-            return;
-        }
-
-        const totalRegistered = registeredReceiptCount;
-        closeModal();
-        showToast(`${totalRegistered}件のレシートを登録しました`);
-        navigateTo(currentPage);
     });
 
     // モーダルリセット
@@ -1456,6 +1535,8 @@ function initUploadModal() {
         reviewItems = [];
         editingReceiptId = null;
         approveBtn.textContent = '✓ 承認して登録';
+        approveBtn.disabled = false;
+        cancelBtn.disabled = false;
         reviewQueue = [];
         currentReviewIndex = 0;
         registeredReceiptCount = 0;
@@ -1491,33 +1572,40 @@ function initUploadModal() {
 
 // ===== 初期化 =====
 document.addEventListener('DOMContentLoaded', () => {
-    loadPersistedData();
     initDataSafety();
-    window.addEventListener('pagehide', savePersistedData);
+
+    window.addEventListener('kakeibo:authenticated', () => loadSharedData({ force: true }));
+    window.addEventListener('kakeibo:signed-out', clearInMemoryData);
+    window.addEventListener('focus', refreshSharedDataIfStale);
     document.addEventListener('visibilitychange', () => {
-        if (document.hidden) savePersistedData();
+        if (!document.hidden) refreshSharedDataIfStale();
     });
 
     // ナビゲーション
     document.querySelectorAll('.nav-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.preventDefault();
+        item.addEventListener('click', (event) => {
+            event.preventDefault();
             navigateTo(item.dataset.page);
+            refreshSharedDataIfStale();
         });
     });
 
     // ページリンク
     document.querySelectorAll('[data-page-link]').forEach(link => {
-        link.addEventListener('click', (e) => {
-            e.preventDefault();
+        link.addEventListener('click', (event) => {
+            event.preventDefault();
             navigateTo(link.dataset.pageLink);
+            refreshSharedDataIfStale();
         });
     });
 
-    // 初期化
     initHamburger();
     initDashboard();
     initDetailModal();
     initUploadModal();
     initMonthSelector();
+
+    if (!window.KakeiboAuth?.enabled || window.KakeiboAuth.getToken()) {
+        loadSharedData({ force: true });
+    }
 });

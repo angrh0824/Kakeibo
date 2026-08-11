@@ -167,3 +167,19 @@ def delete_receipt_image(object_name: str) -> bool:
         raise
     except Exception as exc:
         raise ImageStorageError("Google Cloud Storage上の画像削除に失敗しました。") from exc
+
+def download_receipt_image(object_name: str) -> Tuple[bytes, str]:
+    """Download a private receipt image for authenticated API streaming."""
+    object_name = _validate_object_name(object_name)
+    if not settings.GCS_BUCKET_NAME:
+        raise ImageStorageError("GCS_BUCKET_NAMEが設定されていません。")
+
+    try:
+        client = _storage_client()
+        blob = client.bucket(settings.GCS_BUCKET_NAME).blob(object_name)
+        content = blob.download_as_bytes()
+        return content, blob.content_type or "image/jpeg"
+    except ImageStorageError:
+        raise
+    except Exception as exc:
+        raise ImageStorageError("レシート画像を読み込めませんでした。") from exc
