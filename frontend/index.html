@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="description" content="AIレシート解析による次世代家計簿アプリ。スマートフォンでレシートを撮影するだけで、支出を自動分類・可視化します。">
-    <meta name="theme-color" content="#1A1145">
+    <meta name="theme-color" content="#080B12">
     <title>次世代家計簿 - AIレシート解析ダッシュボード</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -127,7 +127,7 @@
                         <span class="badge">今月</span>
                     </div>
                     <div class="chart-container" id="category-chart-container">
-                        <canvas id="category-chart"></canvas>
+                        <canvas id="category-chart" role="img" aria-label="カテゴリ別支出グラフ"></canvas>
                     </div>
                 </div>
                 <div class="card glass" data-animate="6">
@@ -136,7 +136,7 @@
                         <span class="badge">6ヶ月</span>
                     </div>
                     <div class="chart-container" id="monthly-chart-container">
-                        <canvas id="monthly-chart"></canvas>
+                        <canvas id="monthly-chart" role="img" aria-label="月次支出推移グラフ"></canvas>
                     </div>
                 </div>
             </div>
@@ -151,11 +151,11 @@
                         <table class="data-table" id="recent-receipts-table">
                             <thead>
                                 <tr>
-                                    <th>日付</th>
-                                    <th>店舗</th>
-                                    <th>品目数</th>
-                                    <th>合計金額</th>
-                                    <th>ステータス</th>
+                                    <th class="recent-col-date">日付</th>
+                                    <th class="recent-col-store">店舗</th>
+                                    <th class="recent-col-items">品目数</th>
+                                    <th class="recent-col-total">合計金額</th>
+                                    <th class="recent-col-status">ステータス</th>
                                 </tr>
                             </thead>
                             <tbody></tbody>
@@ -184,13 +184,13 @@
                         <table class="data-table" id="receipts-table">
                             <thead>
                                 <tr>
-                                    <th>日付</th>
-                                    <th>店舗</th>
-                                    <th>品目数</th>
-                                    <th>合計金額</th>
-                                    <th>信頼度</th>
-                                    <th>ステータス</th>
-                                    <th>操作</th>
+                                    <th class="receipt-col-date">日付</th>
+                                    <th class="receipt-col-store">店舗</th>
+                                    <th class="receipt-col-items">品目数</th>
+                                    <th class="receipt-col-total">合計金額</th>
+                                    <th class="receipt-col-confidence">信頼度</th>
+                                    <th class="receipt-col-status">ステータス</th>
+                                    <th class="receipt-col-action">操作</th>
                                 </tr>
                             </thead>
                             <tbody></tbody>
@@ -250,7 +250,7 @@
                 </div>
                 <div id="trends-chart-container">
                     <div class="chart-container large">
-                        <canvas id="price-trend-chart"></canvas>
+                        <canvas id="price-trend-chart" role="img" aria-label="商品価格推移グラフ"></canvas>
                     </div>
                 </div>
                 <div class="trend-stats" id="trend-stats"></div>
@@ -269,7 +269,7 @@
                     <div class="settings-form">
                         <div class="form-group">
                             <label>モデル</label>
-                            <select class="form-input select-input"><option>gemma-4-31b-it</option></select>
+                            <select class="form-input select-input"><option>google/gemma-4-31b-it</option></select>
                         </div>
                         <div class="form-group">
                             <label>OCRエンジン</label>
@@ -288,6 +288,16 @@
                         <button class="btn btn-primary">設定を保存</button>
                     </div>
                 </div>
+            </div>
+            <div class="card glass data-safety-card">
+                <div class="card-header"><h3>&#12487;&#12540;&#12479;&#20445;&#20840;</h3><span class="badge">LOCAL SAFE</span></div>
+                <p class="data-safety-copy">&#12371;&#12398;&#31471;&#26411;&#12395;&#33258;&#21205;&#20445;&#23384;&#12375;&#12414;&#12377;&#12290;&#31471;&#26411;&#22793;&#26356;&#26178;&#12399;&#12496;&#12483;&#12463;&#12450;&#12483;&#12503;&#12434;&#12362;&#12392;&#12426;&#12367;&#12384;&#12373;&#12356;&#12290;</p>
+                <div class="data-safety-actions">
+                    <button class="btn btn-secondary" id="btn-export-data" type="button">&#12496;&#12483;&#12463;&#12450;&#12483;&#12503;&#12434;&#26360;&#12365;&#20986;&#12377;</button>
+                    <button class="btn btn-primary" id="btn-import-data" type="button">&#12496;&#12483;&#12463;&#12450;&#12483;&#12503;&#12434;&#24489;&#20803;</button>
+                    <input type="file" id="data-import-input" accept="application/json,.json" hidden>
+                </div>
+                <p class="storage-status" id="storage-status">&#33258;&#21205;&#20445;&#23384;&#29366;&#24907;&#12434;&#30906;&#35469;&#20013;...</p>
             </div>
         </section>
     </main>
@@ -324,10 +334,10 @@
                     <div class="upload-zone" id="upload-zone">
                         <div class="upload-icon-large">📷</div>
                         <p class="upload-title">レシート画像をアップロード</p>
-                        <p class="upload-hint">ドラッグ&ドロップ、またはタップして選択</p>
+                        <p class="upload-hint">ドラッグ&ドロップ、またはタップして複数選択</p>
                         <button class="btn btn-secondary" id="btn-select-file">ファイルを選択</button>
-                        <input type="file" id="file-input" accept="image/*" capture="environment" hidden>
-                        <p class="upload-note">📱 スマホではカメラが直接起動します</p>
+                        <input type="file" id="file-input" accept="image/*" capture="environment" multiple hidden>
+                        <p class="upload-note">📱 最大10枚まで選択できます。1枚の写真に複数レシートがあっても解析します。</p>
                     </div>
                 </div>
 
@@ -370,6 +380,7 @@
                 <!-- Step 3: Review & Edit -->
                 <div class="modal-step" id="step-review">
                     <div class="review-form" id="review-form">
+                        <p class="review-batch-status" id="review-batch-status" hidden></p>
                         <div class="review-meta-grid">
                             <div class="form-group">
                                 <label for="review-store">店舗名</label>
@@ -428,8 +439,23 @@
     </div>
 
     <!-- Toast Notification Container -->
+    <!-- ===== Record Detail Modal ===== -->
+    <div class="modal-overlay" id="detail-modal" aria-hidden="true">
+        <div class="modal modal-detail" role="dialog" aria-modal="true" aria-labelledby="detail-modal-title">
+            <div class="modal-header">
+                <h3 id="detail-modal-title">詳細</h3>
+                <button class="btn btn-icon modal-close" id="detail-modal-close" aria-label="閉じる">✕</button>
+            </div>
+            <div class="modal-body detail-modal-body" id="detail-modal-body"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="detail-modal-footer-close">閉じる</button>
+            </div>
+        </div>
+    </div>
+
     <div class="toast-container" id="toast-container"></div>
 
+    <script src="js/config.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

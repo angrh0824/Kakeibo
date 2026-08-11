@@ -21,20 +21,4 @@ async def extract_text_from_image(image_bytes: bytes) -> str:
         except Exception as e:
             logger.error(f"Google Cloud Vision OCR エラー: {e}")
 
-    # デモ・フォールバック用ダミーテキスト
-    logger.info("OCR処理完了 (フォールバックテキスト使用)")
-    return r"""
-    マルエイストア 秋葉原店
-    2026/08/02 18:30
-    レシートNo. 12345
-    
-    牛乳 1L          \228
-    食パン 6枚切      \168
-    トイレットペーパー  \398
-    緑茶 500ml  2点   \300
-    
-    小計            \1,094
-    消費税(8%)         \87
-    消費税(10%)        \39
-    合計            \1,280
-    """
+    raise RuntimeError("利用可能なOCRエンジンが設定されていません。")

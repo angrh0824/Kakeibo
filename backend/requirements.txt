@@ -10,3 +10,4 @@ psycopg2-binary>=2.9.9
 python-dotenv>=1.0.1
 pillow>=10.2.0
 google-cloud-vision>=3.7.0
+google-cloud-storage>=2.16.0

@@ -1,12 +1,15 @@
-// ===== アプリデータ（空の初期状態） =====
+const STORAGE_KEY = 'kakeibo.appData.v1';
+const STORAGE_FORMAT_VERSION = 1;
+
+// ===== アプリデータ（永続保存対応） =====
 const appData = {
     receipts: [],
     categories: [
-        { name: '食費', color: '#6C5CE7' },
-        { name: '日用品', color: '#00CEC9' },
-        { name: '衛生用品', color: '#FDCB6E' },
-        { name: '交際費', color: '#FF7675' },
-        { name: 'その他', color: '#A5A3B5' }
+        { name: '食費', color: '#D1AD67' },
+        { name: '日用品', color: '#68D9C1' },
+        { name: '衛生用品', color: '#F2C674' },
+        { name: '交際費', color: '#F28B92' },
+        { name: 'その他', color: '#8893A5' }
     ]
 };
 
@@ -16,16 +19,33 @@ let currentMonth = new Date();
 let charts = {};
 let reviewItems = [];
 
+if (typeof Chart !== 'undefined') {
+    Chart.defaults.color = '#AEB5C3';
+    Chart.defaults.font.family = "Inter, Noto Sans JP, sans-serif";
+    Chart.defaults.font.size = 11;
+}
+
 // ===== ユーティリティ =====
 function formatCurrency(amount) {
     return '¥' + amount.toLocaleString('ja-JP');
 }
 
-function formatDate(dateStr) {
-    const d = new Date(dateStr);
-    return `${d.getMonth() + 1}月${d.getDate()}日`;
+function getItemLineTotal(item) {
+    const quantity = Number(item?.quantity) || 1;
+    const rawLineTotal = item?.line_total;
+    const explicitLineTotal = rawLineTotal === null || rawLineTotal === undefined || rawLineTotal === '' ? NaN : Number(rawLineTotal);
+    if (Number.isFinite(explicitLineTotal)) return explicitLineTotal;
+    return (Number(item?.price) || 0) * quantity;
 }
 
+function formatDate(dateStr) {
+    const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime())) return '-';
+    const yy = String(d.getFullYear()).slice(-2);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yy}/${mm}/${dd}`;
+}
 function getStatusBadge(status) {
     const labels = { 'validated': '検証済み', 'review': '要確認', 'extracted': '抽出済み' };
     return `<span class="status-badge status-${status}">${labels[status] || status}</span>`;
@@ -35,6 +55,292 @@ function generateId() {
     return Date.now() + Math.random().toString(36).substr(2, 9);
 }
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[char]));
+}
+
+function normalizePersistedItem(item) {
+    if (!item || typeof item !== 'object') return null;
+    const quantity = Math.max(1, Number(item.quantity) || 1);
+    const price = Math.max(0, Number(item.price) || 0);
+    const rawLineTotal = item.line_total;
+    const lineTotal = rawLineTotal === null || rawLineTotal === undefined || rawLineTotal === ''
+        ? price * quantity
+        : Math.max(0, Number(rawLineTotal) || 0);
+    return {
+        ...item,
+        name: String(item.name || '未分類商品'),
+        price,
+        quantity,
+        category: String(item.category || 'その他'),
+        line_total: lineTotal
+    };
+}
+
+function normalizePersistedReceipt(receipt, index) {
+    if (!receipt || typeof receipt !== 'object') return null;
+    const items = Array.isArray(receipt.items)
+        ? receipt.items.map(normalizePersistedItem).filter(Boolean)
+        : [];
+    const calculatedTotal = items.reduce((sum, item) => sum + getItemLineTotal(item), 0);
+    const total = Number.isFinite(Number(receipt.total)) ? Math.max(0, Number(receipt.total)) : calculatedTotal;
+    return {
+        ...receipt,
+        id: receipt.id ?? `restored-${Date.now()}-${index}`,
+        date: receipt.date || new Date().toISOString(),
+        store: String(receipt.store || '店舗未設定'),
+        items,
+        total,
+        confidence: Math.min(1, Math.max(0, Number(receipt.confidence) || 0)),
+        status: receipt.status || 'validated'
+    };
+}
+
+function makePersistenceEnvelope() {
+    return {
+        schemaVersion: STORAGE_FORMAT_VERSION,
+        updatedAt: new Date().toISOString(),
+        receipts: appData.receipts,
+        categories: appData.categories
+    };
+}
+
+function applyPersistedData(candidate) {
+    const source = Array.isArray(candidate) ? { receipts: candidate } : candidate;
+    if (!source || !Array.isArray(source.receipts)) return false;
+    const receipts = source.receipts.map(normalizePersistedReceipt).filter(Boolean);
+    const categories = Array.isArray(source.categories)
+        ? source.categories.filter(category => category && category.name).map(category => ({
+            name: String(category.name),
+            color: String(category.color || '#8893A5')
+        }))
+        : [];
+
+    appData.receipts.splice(0, appData.receipts.length, ...receipts);
+    if (categories.length > 0) appData.categories.splice(0, appData.categories.length, ...categories);
+    return true;
+}
+
+function updateStorageStatus() {
+    const status = document.getElementById('storage-status');
+    if (!status) return;
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) {
+            status.textContent = '自動保存はまだありません';
+            return;
+        }
+        const envelope = JSON.parse(raw);
+        const savedAt = envelope.updatedAt ? new Date(envelope.updatedAt).toLocaleString('ja-JP') : '時刻不明';
+        status.textContent = `この端末に自動保存済み：${appData.receipts.length}件 / ${savedAt}`;
+    } catch (error) {
+        status.textContent = '保存状態を確認できません';
+    }
+}
+
+function loadPersistedData() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return false;
+        const parsed = JSON.parse(raw);
+        return applyPersistedData(parsed);
+    } catch (error) {
+        console.warn('保存済みデータを読み込めませんでした。現在のデータは変更していません。', error);
+        return false;
+    }
+}
+
+function savePersistedData() {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(makePersistenceEnvelope()));
+        updateStorageStatus();
+        return true;
+    } catch (error) {
+        console.error('データの自動保存に失敗しました。', error);
+        showToast('自動保存に失敗しました。バックアップを書き出してください', '⚠️');
+        return false;
+    }
+}
+
+function downloadDataBackup() {
+    const blob = new Blob([JSON.stringify(makePersistenceEnvelope(), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const date = new Date().toISOString().slice(0, 10);
+    link.href = url;
+    link.download = `kakeibo-backup-${date}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast('バックアップを書き出しました', '✓');
+}
+
+function initDataSafety() {
+    const exportButton = document.getElementById('btn-export-data');
+    const importButton = document.getElementById('btn-import-data');
+    const importInput = document.getElementById('data-import-input');
+    exportButton?.addEventListener('click', downloadDataBackup);
+    importButton?.addEventListener('click', () => importInput?.click());
+    importInput?.addEventListener('change', async event => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        try {
+            const imported = JSON.parse(await file.text());
+            if (!Array.isArray(imported?.receipts)) throw new Error('バックアップ形式が不正です');
+            const count = imported.receipts.length;
+            if (!window.confirm(`${count}件のレシートで現在のDataを置き換えます。続行しますか？`)) return;
+            localStorage.setItem(`${STORAGE_KEY}.pre-import`, JSON.stringify(makePersistenceEnvelope()));
+            if (!applyPersistedData(imported)) throw new Error('データを復元できませんでした');
+            savePersistedData();
+            navigateTo(currentPage);
+            showToast(`${appData.receipts.length}件のDataを復元しました`, '✓');
+        } catch (error) {
+            console.error('バックアップの復元に失敗しました。', error);
+            showToast('バックアップを復元できませんでした', '⚠️');
+        } finally {
+            event.target.value = '';
+        }
+    });
+    updateStorageStatus();
+}
+function closeDetailModal() {
+    const modal = document.getElementById('detail-modal');
+    if (!modal) return;
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+function showDetailModal(title, bodyHtml, onOpen) {
+    const modal = document.getElementById('detail-modal');
+    const titleEl = document.getElementById('detail-modal-title');
+    const bodyEl = document.getElementById('detail-modal-body');
+    if (!modal || !titleEl || !bodyEl) return;
+
+    titleEl.textContent = title;
+    bodyEl.innerHTML = bodyHtml;
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+    if (onOpen) onOpen(bodyEl);
+}
+
+function initDetailModal() {
+    const modal = document.getElementById('detail-modal');
+    const closeBtn = document.getElementById('detail-modal-close');
+    const footerBtn = document.getElementById('detail-modal-footer-close');
+    if (!modal) return;
+
+    closeBtn?.addEventListener('click', closeDetailModal);
+    footerBtn?.addEventListener('click', closeDetailModal);
+    modal.addEventListener('click', event => {
+        if (event.target === modal) closeDetailModal();
+    });
+}
+
+function openReceiptDetails(receipt) {
+    const items = Array.isArray(receipt.items) ? receipt.items : [];
+    const rows = items.length > 0
+        ? items.map(item => `
+            <tr>
+                <td>${escapeHtml(item.name)}</td>
+                <td>${item.quantity || 1}</td>
+                <td>${formatCurrency(Number(item.price) || 0)}</td>
+                <td>${formatCurrency(getItemLineTotal(item))}</td>
+            </tr>
+        `).join('')
+        : '<tr><td colspan="4">購入品目がありません</td></tr>';
+
+    showDetailModal(`${receipt.store || 'レシート'}の詳細`, `
+        <div class="detail-meta-grid">
+            <div class="detail-meta-card"><div class="detail-meta-label">店舗</div><div class="detail-meta-value">${escapeHtml(receipt.store)}</div></div>
+            <div class="detail-meta-card"><div class="detail-meta-label">購入日時</div><div class="detail-meta-value">${escapeHtml(formatDate(receipt.date))}</div></div>
+            <div class="detail-meta-card"><div class="detail-meta-label">合計金額</div><div class="detail-meta-value">${formatCurrency(Number(receipt.total) || 0)}</div></div>
+            <div class="detail-meta-card"><div class="detail-meta-label">品目数</div><div class="detail-meta-value">${items.length}点</div></div>
+            <div class="detail-meta-card"><div class="detail-meta-label">信頼度</div><div class="detail-meta-value">${Math.round(Math.max(0, Math.min(1, Number(receipt.confidence) || 0)) * 100)}%</div></div>
+            <div class="detail-meta-card"><div class="detail-meta-label">ステータス</div><div class="detail-meta-value">${getStatusBadge(receipt.status)}</div></div>
+        </div>
+        <div class="detail-section-title">購入品目（${items.length}点）</div>
+        <table class="detail-items-table">
+            <thead><tr><th>品名</th><th>数量</th><th>単価</th><th>小計</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table>
+    `);
+}
+
+function openItemDetails(item) {
+    const occurrences = Array.isArray(item.occurrences) ? [...item.occurrences] : [];
+    occurrences.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const history = occurrences.length > 0
+        ? occurrences.map(entry => `
+            <div class="detail-history-row">
+                <span><strong>${escapeHtml(entry.store || '-')}</strong><br><span class="muted">${escapeHtml(formatDate(entry.date))}</span></span>
+                <span>${formatCurrency(Number(entry.price) || 0)} × ${entry.quantity || 1}</span>
+            </div>
+        `).join('')
+        : '<div class="detail-history-row">購入履歴がありません</div>';
+
+    showDetailModal(`${item.name}の商品詳細`, `
+        <div class="detail-meta-grid">
+            <div class="detail-meta-card"><div class="detail-meta-label">カテゴリ</div><div class="detail-meta-value">${escapeHtml(item.category)}</div></div>
+            <div class="detail-meta-card"><div class="detail-meta-label">平均価格</div><div class="detail-meta-value">${formatCurrency(Number(item.avgPrice) || 0)}</div></div>
+            <div class="detail-meta-card"><div class="detail-meta-label">購入回数</div><div class="detail-meta-value">${item.count || 0}回</div></div>
+        </div>
+        <div class="detail-section-title">購入履歴</div>
+        <div class="detail-history-list">${history}</div>
+    `);
+}
+
+function openItemEditor(item) {
+    const categoryOptions = appData.categories.map(category => `
+        <option value="${escapeHtml(category.name)}" ${category.name === item.category ? 'selected' : ''}>${escapeHtml(category.name)}</option>
+    `).join('');
+
+    showDetailModal('商品マスタを編集', `
+        <form class="detail-edit-form" id="item-edit-form">
+            <div class="form-group">
+                <label for="detail-item-name">商品名</label>
+                <input class="form-input" id="detail-item-name" name="name" value="${escapeHtml(item.name)}" required>
+            </div>
+            <div class="form-group">
+                <label for="detail-item-category">カテゴリ</label>
+                <select class="form-input" id="detail-item-category" name="category">${categoryOptions}</select>
+            </div>
+            <div class="form-actions"><button class="btn btn-primary" type="submit">保存</button></div>
+        </form>
+    `, body => {
+        body.querySelector('#item-edit-form')?.addEventListener('submit', event => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const name = form.elements.name.value.trim();
+            const category = form.elements.category.value;
+            if (!name) {
+                showToast('商品名を入力してください', '⚠️');
+                return;
+            }
+
+            appData.receipts.forEach(receipt => receipt.items.forEach(receiptItem => {
+                if (receiptItem.name === item.name) {
+                    receiptItem.name = name;
+                    receiptItem.category = category;
+                }
+            }));
+            savePersistedData();
+            closeDetailModal();
+            showToast(`${name}の商品情報を更新しました`);
+            navigateTo('items');
+        });
+    });
+}
+
+function openItemTrend(itemName) {
+    navigateTo('trends');
+    const select = document.getElementById('trend-item-select');
+    if (!select) return;
+    select.value = itemName;
+    select.dispatchEvent(new Event('change'));
+}
 // ===== Empty State レンダラー =====
 function renderEmptyState(container, icon, title, description, showCTA = true) {
     container.innerHTML = `
@@ -180,6 +486,7 @@ function initDashboard() {
     // カテゴリ別支出チャート
     const categoryContainer = document.getElementById('category-chart-container');
     if (monthReceipts.length === 0) {
+        categoryContainer.classList.add('is-empty');
         const existingCanvas = document.getElementById('category-chart');
         if (existingCanvas) existingCanvas.style.display = 'none';
         if (!categoryContainer.querySelector('.empty-state')) {
@@ -188,6 +495,7 @@ function initDashboard() {
             renderEmptyState(wrapper, '📊', 'カテゴリデータなし', 'レシートを登録するとカテゴリ別支出が表示されます', false);
         }
     } else {
+        categoryContainer.classList.remove('is-empty');
         const es = categoryContainer.querySelector('.empty-state');
         if (es) es.parentElement.remove();
         const canvas = document.getElementById('category-chart');
@@ -197,7 +505,7 @@ function initDashboard() {
         monthReceipts.forEach(r => {
             r.items.forEach(item => {
                 const cat = item.category || 'その他';
-                catTotals[cat] = (catTotals[cat] || 0) + (item.price * (item.quantity || 1));
+                catTotals[cat] = (catTotals[cat] || 0) + getItemLineTotal(item);
             });
         });
 
@@ -205,7 +513,7 @@ function initDashboard() {
         const catAmounts = catNames.map(n => catTotals[n]);
         const catColors = catNames.map(n => {
             const found = appData.categories.find(c => c.name === n);
-            return found ? found.color : '#A5A3B5';
+            return found ? found.color : '#8893A5';
         });
 
         if (charts.category) charts.category.destroy();
@@ -231,7 +539,7 @@ function initDashboard() {
                         labels: { padding: 16, usePointStyle: true, font: { family: 'Inter', size: 13 } }
                     },
                     tooltip: {
-                        backgroundColor: 'rgba(45,43,61,0.9)',
+                        backgroundColor: 'rgba(9,14,22,0.94)',
                         padding: 12,
                         titleFont: { family: 'Inter', size: 13 },
                         bodyFont: { family: 'Inter', size: 13 },
@@ -287,8 +595,8 @@ function initDashboard() {
                 datasets: [{
                     label: '支出',
                     data: months.map(m => m.total),
-                    backgroundColor: 'rgba(108, 92, 231, 0.7)',
-                    hoverBackgroundColor: 'rgba(108, 92, 231, 0.9)',
+                    backgroundColor: 'rgba(209, 173, 103, 0.72)',
+                    hoverBackgroundColor: 'rgba(209, 173, 103, 0.94)',
                     borderRadius: 8,
                     borderSkipped: false
                 }]
@@ -299,7 +607,7 @@ function initDashboard() {
                 plugins: {
                     legend: { display: false },
                     tooltip: {
-                        backgroundColor: 'rgba(45,43,61,0.9)',
+                        backgroundColor: 'rgba(9,14,22,0.94)',
                         padding: 12,
                         titleFont: { family: 'Inter' },
                         bodyFont: { family: 'Inter' },
@@ -309,7 +617,7 @@ function initDashboard() {
                 scales: {
                     y: {
                         beginAtZero: true,
-                        grid: { color: 'rgba(108,92,231,0.06)' },
+                        grid: { color: 'rgba(209,173,103,0.10)' },
                         ticks: { font: { family: 'Inter', size: 12 }, callback: (v) => '¥' + (v / 1000) + 'k' }
                     },
                     x: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 12 } } }
@@ -336,11 +644,11 @@ function initDashboard() {
         const sorted = [...appData.receipts].sort((a, b) => new Date(b.date) - new Date(a.date));
         tbody.innerHTML = sorted.slice(0, 5).map(r => `
             <tr>
-                <td>${formatDate(r.date)}</td>
-                <td>${r.store}</td>
-                <td>${r.items.length}点</td>
-                <td>${formatCurrency(r.total)}</td>
-                <td>${getStatusBadge(r.status)}</td>
+                <td class="recent-col-date">${formatDate(r.date)}</td>
+                <td class="recent-col-store">${escapeHtml(r.store)}</td>
+                <td class="recent-col-items">${r.items.length}点</td>
+                <td class="recent-col-total">${formatCurrency(r.total)}</td>
+                <td class="recent-col-status">${getStatusBadge(r.status)}</td>
             </tr>
         `).join('');
     }
@@ -351,42 +659,68 @@ function renderReceiptsTable(receipts) {
     const tbody = document.querySelector('#receipts-table tbody');
     tbody.innerHTML = receipts.map(r => `
         <tr>
-            <td>${formatDate(r.date)}</td>
-            <td>${r.store}</td>
-            <td>${r.items.length}点</td>
-            <td>${formatCurrency(r.total)}</td>
-            <td>
+            <td class="receipt-col-date">${formatDate(r.date)}</td>
+            <td class="receipt-col-store">${escapeHtml(r.store)}</td>
+            <td class="receipt-col-items">${r.items.length}点</td>
+            <td class="receipt-col-total">${formatCurrency(r.total)}</td>
+            <td class="receipt-col-confidence">
                 <div class="confidence-bar">
                     <div class="confidence-fill" style="width:${r.confidence * 100}%"></div>
                 </div>
             </td>
-            <td>${getStatusBadge(r.status)}</td>
-            <td>
-                <button class="btn btn-icon" title="詳細">👁️</button>
-                <button class="btn btn-icon" title="編集">✏️</button>
+            <td class="receipt-col-status">${getStatusBadge(r.status)}</td>
+            <td class="receipt-col-action">
+                <button class="btn btn-icon" data-receipt-action="detail" data-receipt-id="${escapeHtml(r.id)}" title="詳細">👁️</button>
+                <button class="btn btn-icon" data-receipt-action="edit" data-receipt-id="${escapeHtml(r.id)}" title="編集">✏️</button>
             </td>
         </tr>
     `).join('');
+    tbody.querySelectorAll('[data-receipt-action]').forEach(button => {
+        button.addEventListener('click', () => {
+            const receipt = appData.receipts.find(item => String(item.id) === button.dataset.receiptId);
+            if (!receipt) return;
+            if (button.dataset.receiptAction === 'detail') openReceiptDetails(receipt);
+            if (button.dataset.receiptAction === 'edit' && typeof window.openReceiptEditor === 'function') {
+                window.openReceiptEditor(receipt);
+            }
+        });
+    });
+
 }
 
 function initReceiptsPage() {
     const container = document.getElementById('receipts-container');
+    const table = document.getElementById('receipts-table');
+    const monthReceipts = getMonthReceipts();
+    const monthLabel = `${currentMonth.getFullYear()}年${currentMonth.getMonth() + 1}月`;
 
-    if (appData.receipts.length === 0) {
-        document.getElementById('receipts-table').style.display = 'none';
-        if (!container.querySelector('.empty-state')) {
-            const wrapper = document.createElement('div');
-            container.appendChild(wrapper);
-            renderEmptyState(wrapper, '🧾', 'レシートがありません', '「レシートを撮影」ボタンでレシートを登録しましょう', true);
+    if (monthReceipts.length === 0) {
+        table.style.display = 'none';
+        table.querySelector('tbody').innerHTML = '';
+        const existingEmpty = container.querySelector('.empty-state');
+        if (existingEmpty) {
+            const wrapper = existingEmpty.parentElement;
+            if (wrapper) wrapper.remove();
         }
+        const wrapper = document.createElement('div');
+        container.appendChild(wrapper);
+        const hasAnyReceipts = appData.receipts.length > 0;
+        renderEmptyState(
+            wrapper,
+            '🗓️',
+            `${monthLabel}のレシートはありません`,
+            hasAnyReceipts ? '上の月セレクターで別の月を選択してください' : '「レシートを撮影」からレシートを登録してください',
+            !hasAnyReceipts
+        );
         return;
     }
 
-    document.getElementById('receipts-table').style.display = 'table';
+    table.style.display = 'table';
     const esWrapper = container.querySelector('.empty-state');
-    if (esWrapper) esWrapper.closest('div:not(#receipts-container)').remove();
-
-    renderReceiptsTable(appData.receipts);
+    if (esWrapper) {
+        const wrapper = esWrapper.parentElement;
+        if (wrapper) wrapper.remove();
+    }
 
     const searchInput = document.getElementById('receipt-search');
     const filterSelect = document.getElementById('receipt-filter');
@@ -398,7 +732,7 @@ function initReceiptsPage() {
     function applyFilters() {
         const query = document.getElementById('receipt-search').value.toLowerCase();
         const statusFilter = document.getElementById('receipt-filter').value;
-        let filtered = appData.receipts;
+        let filtered = getMonthReceipts();
         if (query) filtered = filtered.filter(r => r.store.toLowerCase().includes(query));
         if (statusFilter !== 'all') filtered = filtered.filter(r => r.status === statusFilter);
         renderReceiptsTable(filtered);
@@ -406,8 +740,8 @@ function initReceiptsPage() {
 
     document.getElementById('receipt-search').addEventListener('input', applyFilters);
     document.getElementById('receipt-filter').addEventListener('change', applyFilters);
+    applyFilters();
 }
-
 // ===== 商品マスタページ =====
 function getUniqueItems() {
     const itemMap = {};
@@ -415,10 +749,11 @@ function getUniqueItems() {
         r.items.forEach(item => {
             const key = item.name;
             if (!itemMap[key]) {
-                itemMap[key] = { name: item.name, category: item.category, prices: [], count: 0, aliases: 1 };
+                itemMap[key] = { name: item.name, category: item.category, prices: [], count: 0, aliases: 1, occurrences: [] };
             }
             itemMap[key].prices.push(item.price);
             itemMap[key].count++;
+            itemMap[key].occurrences.push({ receiptId: r.id, date: r.date, store: r.store, price: item.price, quantity: item.quantity || 1 });
         });
     });
     return Object.values(itemMap).map(item => ({
@@ -429,7 +764,7 @@ function getUniqueItems() {
 
 function renderItemsTable(items) {
     const tbody = document.querySelector('#items-table tbody');
-    tbody.innerHTML = items.map(item => `
+    tbody.innerHTML = items.map((item, index) => `
         <tr>
             <td>${item.name}</td>
             <td>${item.category}</td>
@@ -437,11 +772,21 @@ function renderItemsTable(items) {
             <td>${formatCurrency(item.avgPrice)}</td>
             <td>${item.count}回</td>
             <td>
-                <button class="btn btn-icon" title="価格推移">📈</button>
-                <button class="btn btn-icon" title="編集">✏️</button>
+                <button class="btn btn-icon" data-item-action="detail" data-item-index="${index}" title="詳細">👁️</button>
+                <button class="btn btn-icon" data-item-action="edit" data-item-index="${index}" title="編集">✏️</button>
+                <button class="btn btn-icon" data-item-action="trend" data-item-index="${index}" title="価格推移">📈</button>
             </td>
         </tr>
     `).join('');
+    tbody.querySelectorAll('[data-item-action]').forEach(button => {
+        button.addEventListener('click', () => {
+            const item = items[Number(button.dataset.itemIndex)];
+            if (!item) return;
+            if (button.dataset.itemAction === 'detail') openItemDetails(item);
+            if (button.dataset.itemAction === 'edit') openItemEditor(item);
+            if (button.dataset.itemAction === 'trend') openItemTrend(item.name);
+        });
+    });
 }
 
 function initItemsPage() {
@@ -540,12 +885,12 @@ function initTrendsPage() {
                 datasets: [{
                     label: itemName,
                     data: avgPrices,
-                    borderColor: '#6C5CE7',
-                    backgroundColor: 'rgba(108, 92, 231, 0.1)',
+                    borderColor: '#D1AD67',
+                    backgroundColor: 'rgba(209, 173, 103, 0.12)',
                     fill: true,
                     tension: 0.4,
                     pointRadius: 6,
-                    pointBackgroundColor: '#6C5CE7',
+                    pointBackgroundColor: '#D1AD67',
                     pointBorderColor: '#fff',
                     pointBorderWidth: 2,
                     pointHoverRadius: 8
@@ -557,7 +902,7 @@ function initTrendsPage() {
                 plugins: {
                     legend: { display: false },
                     tooltip: {
-                        backgroundColor: 'rgba(45,43,61,0.9)',
+                        backgroundColor: 'rgba(9,14,22,0.94)',
                         padding: 12,
                         callbacks: { label: (ctx) => ` ${formatCurrency(ctx.parsed.y)}` }
                     }
@@ -565,7 +910,7 @@ function initTrendsPage() {
                 scales: {
                     y: {
                         beginAtZero: false,
-                        grid: { color: 'rgba(108,92,231,0.06)' },
+                        grid: { color: 'rgba(209,173,103,0.10)' },
                         ticks: { font: { family: 'Inter' }, callback: (v) => '¥' + v }
                     },
                     x: { grid: { display: false }, ticks: { font: { family: 'Inter' } } }
@@ -588,7 +933,7 @@ function initTrendsPage() {
                 </div>
                 <div class="trend-stat">
                     <div class="label">変動率</div>
-                    <div class="value" style="color:${change >= 0 ? '#FF7675' : '#00B894'}">
+                    <div class="value" style="color:${change >= 0 ? '#F28B92' : '#62D8AD'}">
                         ${change >= 0 ? '+' : ''}${change}%
                     </div>
                 </div>
@@ -633,6 +978,7 @@ function initMonthSelector() {
     function updateMonth() {
         monthLabel.textContent = `${currentMonth.getFullYear()}年${currentMonth.getMonth() + 1}月`;
         if (currentPage === 'dashboard') initDashboard();
+        if (currentPage === 'receipts') initReceiptsPage();
     }
 
     document.getElementById('prev-month').addEventListener('click', () => {
@@ -659,6 +1005,10 @@ function initUploadModal() {
     const addItemBtn = document.getElementById('btn-add-item');
 
     let currentStep = 1;
+    let editingReceiptId = null;
+    let reviewQueue = [];
+    let currentReviewIndex = 0;
+    let registeredReceiptCount = 0;
     reviewItems = [];
 
     // モーダルを開く
@@ -674,7 +1024,34 @@ function initUploadModal() {
     }
 
     closeBtn.addEventListener('click', closeModal);
-    cancelBtn.addEventListener('click', closeModal);
+
+    function discardEditingReceipt() {
+        if (!editingReceiptId) {
+            closeModal();
+            return;
+        }
+
+        const index = appData.receipts.findIndex(item => String(item.id) === String(editingReceiptId));
+        if (index < 0) {
+            closeModal();
+            return;
+        }
+
+        const removed = appData.receipts[index];
+        appData.receipts.splice(index, 1);
+        savePersistedData();
+        closeModal();
+        showToast(`${removed.store || '\u30ec\u30b7\u30fc\u30c8'}\u306e\u30ec\u30b7\u30fc\u30c8\u3092\u7834\u68c4\u3057\u307e\u3057\u305f`, '\u2713');
+        navigateTo('receipts');
+    }
+
+    cancelBtn.addEventListener('click', () => {
+        if (currentStep === 3 && editingReceiptId) {
+            discardEditingReceipt();
+            return;
+        }
+        closeModal();
+    });
     modal.addEventListener('click', (e) => {
         if (e.target === modal) closeModal();
     });
@@ -736,12 +1113,22 @@ function initUploadModal() {
 
     // アップロード処理 → ステップ2
     function handleUpload(files) {
+        const selectedFiles = Array.from(files).filter(file => !file.type || file.type.startsWith("image/"));
+        if (selectedFiles.length === 0) {
+            showToast("画像ファイルを選択してください", "⚠️");
+            return;
+        }
+        if (selectedFiles.length > 10) {
+            showToast("一度に選択できる画像は10枚までです", "⚠️");
+            return;
+        }
+
         goToStep(2);
-        simulateAnalysis(files);
+        analyzeFiles(selectedFiles);
     }
 
-    // AI解析シミュレーション
-    function simulateAnalysis(files) {
+    // 実画像解析
+    function analyzeFiles(files) {
         const status = document.getElementById('analysis-status');
         const ocrProgress = document.getElementById('ocr-progress');
         const parseProgress = document.getElementById('parse-progress');
@@ -750,6 +1137,7 @@ function initUploadModal() {
         const parseStep = document.getElementById('a-step-parse');
         const classifyStep = document.getElementById('a-step-classify');
 
+        status.classList.remove('error');
         [ocrProgress, parseProgress, classifyProgress].forEach(p => p.style.width = '0%');
         [ocrStep, parseStep, classifyStep].forEach(s => {
             s.classList.remove('active', 'completed');
@@ -778,24 +1166,39 @@ function initUploadModal() {
                 classifyStep.classList.add('active');
                 classifyStep.querySelector('.a-step-status').textContent = '処理中...';
                 status.textContent = 'カテゴリ分類中...';
-                
-                // バックエンドAPIの呼び出し試行
-                let resultData = null;
+
+                // バックエンドAPIで実画像を解析する。API障害時にテストデータへは切り替えない。
+                let resultData;
                 try {
                     const formData = new FormData();
-                    formData.append('file', files[0]);
-                    const res = await fetch('http://localhost:8000/api/receipts/analyze', {
+                    files.forEach(file => formData.append('files', file));
+                    const res = await fetch(getReceiptAnalyzeUrl(), {
                         method: 'POST',
                         body: formData
                     });
-                    if (res.ok) {
-                        const resJson = await res.json();
-                        if (resJson.success && resJson.data) {
-                            resultData = resJson.data;
-                        }
+                    const resJson = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        throw new Error(resJson.detail || `解析APIエラー (${res.status})`);
                     }
+                    if (!resJson.success) throw new Error(resJson.detail || '解析APIが失敗しました');
+                    resultData = normalizeAnalysisResults(resJson);
+                    if (resultData.length === 0) throw new Error('画像からレシートを検出できませんでした');
                 } catch (e) {
-                    console.log('バックエンド未起動のためローカルシミュレーションを実行します:', e);
+                    const message = e instanceof Error ? e.message : '画像解析に失敗しました';
+                    console.error('実画像解析に失敗しました:', e);
+                    [ocrStep, parseStep, classifyStep].forEach(step => {
+                        step.classList.remove('active');
+                        step.classList.add('error');
+                        step.querySelector('.a-step-status').textContent = '失敗';
+                    });
+                    status.classList.add('error');
+                    status.textContent = message;
+                    showToast(message, '⚠️');
+                    setTimeout(() => {
+                        goToStep(1);
+                        fileInput.value = '';
+                    }, 700);
+                    return;
                 }
 
                 animateProgress(classifyProgress, 600, () => {
@@ -805,13 +1208,43 @@ function initUploadModal() {
                     status.textContent = '解析完了！';
 
                     setTimeout(() => {
-                        const result = resultData || generateSimulatedResult();
-                        showReviewForm(result);
+                        reviewQueue = resultData;
+                        currentReviewIndex = 0;
+                        registeredReceiptCount = 0;
                         goToStep(3);
+                        showReviewForm(reviewQueue[currentReviewIndex]);
                     }, 400);
                 });
             });
         });
+    }
+
+    function getReceiptAnalyzeUrl() {
+        const configuredBase = typeof window !== 'undefined' ? window.KAKEIBO_API_BASE_URL : '';
+        const isLocalHost = typeof window !== 'undefined' && window.location
+            && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+        const isHttpOrigin = typeof window !== 'undefined' && window.location
+            && /^https?:$/.test(window.location.protocol);
+        const defaultBase = isHttpOrigin && !isLocalHost
+            ? window.location.origin
+            : 'http://localhost:8000';
+        const baseUrl = String(configuredBase || defaultBase).replace(/\/+$/, '');
+        return `${baseUrl}/api/receipts/analyze`;
+    }
+
+    function normalizeAnalysisResults(payload) {
+        const receipts = payload && Array.isArray(payload.receipts) ? payload.receipts : [];
+        if (receipts.length > 0) return receipts;
+
+        if (payload && Array.isArray(payload.images)) {
+            return payload.images.flatMap(image => Array.isArray(image.receipts) ? image.receipts : []);
+        }
+        if (payload && payload.data) {
+            if (Array.isArray(payload.data.receipts)) return payload.data.receipts;
+            if (payload.data.store || payload.data.items) return [payload.data];
+        }
+        if (payload && (payload.store || payload.items)) return [payload];
+        return receipts;
     }
 
     function animateProgress(fillEl, duration, callback) {
@@ -829,56 +1262,30 @@ function initUploadModal() {
         requestAnimationFrame(update);
     }
 
-    // シミュレート用AI解析結果生成
-    function generateSimulatedResult() {
-        const stores = ['セブンイレブン', 'ローソン', 'ファミリーマート', 'マルエイストア', 'イオン', 'サンドラッグ', '西友', 'まいばすけっと'];
-        const foodItems = [
-            { name: 'おにぎり 鮭', price: 160, category: '食費' },
-            { name: 'サンドイッチ ミックス', price: 298, category: '食費' },
-            { name: '緑茶 500ml', price: 150, category: '食費' },
-            { name: 'コーヒー ブラック', price: 128, category: '食費' },
-            { name: '牛乳 1L', price: 228, category: '食費' },
-            { name: '食パン 6枚切', price: 168, category: '食費' },
-            { name: 'バナナ 1房', price: 198, category: '食費' },
-            { name: 'ヨーグルト 400g', price: 178, category: '食費' },
-            { name: 'ティッシュ 5箱', price: 348, category: '日用品' },
-            { name: 'ハンドソープ 詰替', price: 298, category: '衛生用品' },
-        ];
-
-        const numItems = 2 + Math.floor(Math.random() * 4);
-        const selectedItems = [];
-        const shuffled = [...foodItems].sort(() => Math.random() - 0.5);
-        for (let i = 0; i < numItems && i < shuffled.length; i++) {
-            selectedItems.push({
-                name: shuffled[i].name,
-                price: shuffled[i].price,
-                quantity: 1,
-                category: shuffled[i].category
-            });
-        }
-
-        const total = selectedItems.reduce((s, item) => s + item.price * item.quantity, 0);
-
-        return {
-            store: stores[Math.floor(Math.random() * stores.length)],
-            date: new Date().toISOString().slice(0, 16),
-            items: selectedItems,
-            total: total,
-            confidence: 0.85 + Math.random() * 0.12
-        };
-    }
-
     // レビューフォーム表示
     function showReviewForm(result) {
-        document.getElementById('review-store').value = result.store;
-        document.getElementById('review-date').value = result.date;
+        document.getElementById('review-store').value = (result && result.store) || '';
+        document.getElementById('review-date').value = (result && result.date) || '';
 
-        const confidence = Math.round(result.confidence * 100);
+        const confidence = Math.max(0, Math.min(100, Math.round(Number(result && result.confidence) * 100 || 0)));
         document.getElementById('confidence-fill-lg').style.width = confidence + '%';
         document.getElementById('confidence-pct').textContent = confidence + '%';
 
-        reviewItems = result.items.map((item, i) => ({ ...item, id: i }));
+        reviewItems = (Array.isArray(result && result.items) ? result.items : []).map((item, i) => ({ ...item, id: i }));
+        updateReviewBatchStatus();
         renderReviewItems();
+    }
+
+    function updateReviewBatchStatus() {
+        const status = document.getElementById('review-batch-status');
+        if (!status || reviewQueue.length <= 1) {
+            if (status) status.hidden = true;
+            cancelBtn.textContent = '破棄する';
+            return;
+        }
+        status.hidden = false;
+        status.textContent = `${currentReviewIndex + 1} / ${reviewQueue.length} 件目を確認中`;
+        cancelBtn.textContent = '残りを破棄';
     }
 
     // レビュー品目テーブル描画
@@ -897,7 +1304,7 @@ function initUploadModal() {
                         ).join('')}
                     </select>
                 </td>
-                <td class="col-subtotal">${formatCurrency(item.price * item.quantity)}</td>
+                <td class="col-subtotal">${formatCurrency(getItemLineTotal(item))}</td>
                 <td class="col-action"><button class="btn-danger review-item-delete" data-index="${index}" type="button" title="削除">✕</button></td>
             </tr>
         `).join('');
@@ -911,14 +1318,18 @@ function initUploadModal() {
 
         tbody.querySelectorAll('.review-item-price').forEach(input => {
             input.addEventListener('input', (e) => {
-                reviewItems[e.target.dataset.index].price = parseInt(e.target.value) || 0;
+                const item = reviewItems[e.target.dataset.index];
+                item.price = parseInt(e.target.value) || 0;
+                item.line_total = item.price * (item.quantity || 1);
                 updateReviewTotals();
             });
         });
 
         tbody.querySelectorAll('.review-item-qty').forEach(input => {
             input.addEventListener('input', (e) => {
-                reviewItems[e.target.dataset.index].quantity = parseInt(e.target.value) || 1;
+                const item = reviewItems[e.target.dataset.index];
+                item.quantity = parseInt(e.target.value) || 1;
+                item.line_total = (item.price || 0) * item.quantity;
                 updateReviewTotals();
             });
         });
@@ -944,12 +1355,12 @@ function initUploadModal() {
     function updateReviewTotals() {
         document.querySelectorAll('#review-items-body tr').forEach((tr, index) => {
             if (reviewItems[index]) {
-                const subtotal = reviewItems[index].price * reviewItems[index].quantity;
+                const subtotal = getItemLineTotal(reviewItems[index]);
                 tr.querySelector('.col-subtotal').textContent = formatCurrency(subtotal);
             }
         });
 
-        const total = reviewItems.reduce((s, item) => s + (item.price * item.quantity), 0);
+        const total = reviewItems.reduce((s, item) => s + getItemLineTotal(item), 0);
         document.getElementById('review-total').textContent = formatCurrency(total);
     }
 
@@ -981,27 +1392,51 @@ function initUploadModal() {
             return;
         }
 
-        const total = reviewItems.reduce((s, item) => s + (item.price * item.quantity), 0);
+        const total = reviewItems.reduce((s, item) => s + getItemLineTotal(item), 0);
 
         const receipt = {
-            id: generateId(),
+            id: editingReceiptId || generateId(),
             date: date || new Date().toISOString(),
             store: store,
+            source_filename: reviewQueue[currentReviewIndex]?.source_filename || '',
+            image_storage: reviewQueue[currentReviewIndex]?.image_storage || null,
             items: reviewItems.map(item => ({
                 name: item.name,
                 price: item.price,
                 quantity: item.quantity,
-                category: item.category
+                category: item.category,
+                line_total: getItemLineTotal(item)
             })),
             total: total,
             confidence: parseFloat(document.getElementById('confidence-pct').textContent) / 100 || 0.9,
             status: 'validated'
         };
 
-        appData.receipts.push(receipt);
+        if (editingReceiptId) {
+            const existing = appData.receipts.find(item => String(item.id) === String(editingReceiptId));
+            if (existing) Object.assign(existing, receipt);
+            else appData.receipts.push(receipt);
+            savePersistedData();
+            editingReceiptId = null;
+            closeModal();
+            showToast(`${store}のレシートを更新しました`);
+            navigateTo('receipts');
+            return;
+        }
 
+        appData.receipts.push(receipt);
+        savePersistedData();
+        registeredReceiptCount += 1;
+        if (currentReviewIndex < reviewQueue.length - 1) {
+            currentReviewIndex += 1;
+            showReviewForm(reviewQueue[currentReviewIndex]);
+            showToast(`${store}のレシートを登録しました。次のレシートを確認してください`);
+            return;
+        }
+
+        const totalRegistered = registeredReceiptCount;
         closeModal();
-        showToast(`${store}のレシートを登録しました`);
+        showToast(`${totalRegistered}件のレシートを登録しました`);
         navigateTo(currentPage);
     });
 
@@ -1010,18 +1445,50 @@ function initUploadModal() {
         goToStep(1);
         fileInput.value = '';
         reviewItems = [];
+        editingReceiptId = null;
+        approveBtn.textContent = '✓ 承認して登録';
+        reviewQueue = [];
+        currentReviewIndex = 0;
+        registeredReceiptCount = 0;
         document.getElementById('review-items-body').innerHTML = '';
         document.getElementById('review-store').value = '';
         document.getElementById('review-date').value = '';
         document.getElementById('review-total').textContent = '¥0';
         document.getElementById('confidence-fill-lg').style.width = '0%';
         document.getElementById('confidence-pct').textContent = '--%';
+        const batchStatus = document.getElementById('review-batch-status');
+        if (batchStatus) batchStatus.hidden = true;
+        cancelBtn.textContent = 'キャンセル';
         [document.getElementById('ocr-progress'), document.getElementById('parse-progress'), document.getElementById('classify-progress')].forEach(p => p.style.width = '0%');
     }
+
+    window.openReceiptEditor = function(receipt) {
+        if (!receipt) return;
+        const draft = {
+            ...receipt,
+            items: (receipt.items || []).map(item => ({ ...item }))
+        };
+        editingReceiptId = receipt.id;
+        reviewQueue = [draft];
+        currentReviewIndex = 0;
+        registeredReceiptCount = 0;
+        modal.classList.add('active');
+        goToStep(3);
+        document.getElementById('modal-title').textContent = 'レシートを編集';
+        approveBtn.textContent = '✓ 更新を保存';
+        showReviewForm(draft);
+    };
 }
 
 // ===== 初期化 =====
 document.addEventListener('DOMContentLoaded', () => {
+    loadPersistedData();
+    initDataSafety();
+    window.addEventListener('pagehide', savePersistedData);
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) savePersistedData();
+    });
+
     // ナビゲーション
     document.querySelectorAll('.nav-item').forEach(item => {
         item.addEventListener('click', (e) => {
@@ -1041,6 +1508,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // 初期化
     initHamburger();
     initDashboard();
+    initDetailModal();
     initUploadModal();
     initMonthSelector();
 });

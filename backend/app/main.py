@@ -12,12 +12,16 @@ app = FastAPI(
     description="Gemma-4-31b-it を用いた次世代家計簿 AI バックエンド API",
     version="2.0.0"
 )
+frontend_origins = [origin.strip() for origin in settings.FRONTEND_ORIGINS.split(",") if origin.strip()]
+if not frontend_origins:
+    frontend_origins = ["*"]
+
 
 # CORS の許可設定 (フロントエンドからのリクエストを許可)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 開発用にすべてのアタッチを許可
-    allow_credentials=True,
+    allow_origins=frontend_origins,
+    allow_credentials=frontend_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

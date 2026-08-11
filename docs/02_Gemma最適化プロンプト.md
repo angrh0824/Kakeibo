@@ -1,8 +1,9 @@
 # Gemma-4-31b-it 用 最適化プロンプト設計
+> **現行実装との対応**: この文書は旧プロンプト案です。現在はOCRテキストをGemini SDKへ渡すのではなく、`backend/app/services/ai_service.py`の`JAPANESE_RECEIPT_PROMPT`を使い、圧縮済み画像をOpenRouterへ直接送信しています。実際のJSON項目は`store`、`date`、`total`、`subtotal`、`tax`、`taxes`、`items`です。現行仕様は`00_現行実装仕様.md`を参照してください。
 
 ## 1. プロンプト設計の基本方針
 
-Gemma-4-31b-it は命令追従型のテキストモデルとして、**OCRエンジンで抽出したテキストを入力とし、構造化JSONを出力**させる役割を担う。
+現在の実装では、設定されたOpenRouterマルチモーダルモデル（既定値は`google/gemma-4-31b-it`）へ、圧縮済みレシート画像と本プロンプトを直接入力し、構造化JSONを出力させる。
 
 ### 設計原則
 
