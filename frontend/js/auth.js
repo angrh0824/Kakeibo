@@ -151,7 +151,7 @@
                 size: 'large',
                 shape: 'pill',
                 text: 'signin_with',
-                width: Math.min(320, Math.max(240, container.clientWidth || 280)),
+                width: Math.min(320, Math.max(200, Math.floor(container.getBoundingClientRect().width || window.innerWidth - 68))),
                 locale: 'ja',
             });
             googleButtonRendered = true;
