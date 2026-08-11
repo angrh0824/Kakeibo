@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     FRONTEND_ORIGINS: str = "*"
+    AUTH_REQUIRED: bool = False
+    GOOGLE_OAUTH_CLIENT_ID: str = ""
+    ALLOWED_USER_EMAILS: str = ""
     
     OPENROUTER_API_KEY: str = ""
     DEFAULT_AI_MODEL: str = "google/gemma-4-31b-it"

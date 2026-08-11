@@ -1,7 +1,8 @@
 import asyncio
 from typing import List, Optional
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from app.auth import AuthenticatedUser, require_authorized_user
 from app.services.ai_service import ReceiptAnalysisError, analyze_receipt_image
 from app.services.image_storage import ImageStorageError, compress_receipt_image, upload_receipt_image
 import logging
@@ -14,6 +15,7 @@ MAX_IMAGES_PER_REQUEST = 10
 
 @router.post("/receipts/analyze")
 async def analyze_receipts(
+    user: AuthenticatedUser = Depends(require_authorized_user),
     files: Optional[List[UploadFile]] = File(default=None),
     file: Optional[UploadFile] = File(default=None),
 ):
@@ -89,6 +91,10 @@ async def analyze_receipts(
     except Exception as e:
         logger.error("レシート画像解析エラー: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="レシート画像解析中に予期しないエラーが発生しました。") from e
+
+@router.get("/auth/me")
+async def auth_me(user: AuthenticatedUser = Depends(require_authorized_user)):
+    return {"authenticated": True, "user": user.model_dump()}
 
 @router.get("/health")
 async def health_check():

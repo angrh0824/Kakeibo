@@ -19,6 +19,7 @@ AIレシート解析による次世代家計簿アプリのフロントエンド
 - HTML5 / CSS3 / JavaScript (Vanilla)
 - Chart.js 4.4.3 (CDN)
 - レスポンシブデザイン対応
+- Google Identity Services（家族Googleアカウント認証）
 
 ## ローカルでの実行
 
@@ -39,4 +40,13 @@ python -m http.server 5500
 
 ## デプロイ
 
-Firebase Hostingの`frontend`配信と、Cloud RunのFastAPI APIを組み合わせる構成を推奨します。リポジトリの`firebase.json`に`/api/**`からCloud Runサービスへリライトする設定があります。ローカルAPI以外を使う場合は`frontend/js/config.js`の`KAKEIBO_API_BASE_URL`を設定します。
+`.github/workflows/pages.yml`が`frontend`をGitHub Pagesへ自動配信し、FastAPIはCloud Runで稼働します。`frontend/js/config.js`に次を設定します。
+
+```javascript
+window.KAKEIBO_API_BASE_URL = "https://<cloud-run-service>.run.app";
+window.KAKEIBO_GOOGLE_CLIENT_ID = "<web-oauth-client-id>.apps.googleusercontent.com";
+```
+
+OAuthクライアントIDは公開識別子であり、クライアントシークレットやOpenRouter APIキーをフロントへ置かないでください。Cloud Run側では`AUTH_REQUIRED=True`、同じ`GOOGLE_OAUTH_CLIENT_ID`、家族の`ALLOWED_USER_EMAILS`を設定します。
+
+`firebase.json`はFirebase Hostingを使う場合の代替設定として残しています。

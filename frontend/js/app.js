@@ -1172,11 +1172,20 @@ function initUploadModal() {
                 try {
                     const formData = new FormData();
                     files.forEach(file => formData.append('files', file));
+                    const authHeaders = window.KakeiboAuth?.getAuthorizationHeaders?.() || {};
+                    if (window.KakeiboAuth?.enabled && !authHeaders.Authorization) {
+                        window.KakeiboAuth.handleUnauthorized();
+                        throw new Error('Googleログインが必要です。');
+                    }
                     const res = await fetch(getReceiptAnalyzeUrl(), {
                         method: 'POST',
+                        headers: authHeaders,
                         body: formData
                     });
                     const resJson = await res.json().catch(() => ({}));
+                    if (res.status === 401 || res.status === 403) {
+                        window.KakeiboAuth?.handleUnauthorized?.(resJson.detail || 'このGoogleアカウントでは利用できません。');
+                    }
                     if (!res.ok) {
                         throw new Error(resJson.detail || `解析APIエラー (${res.status})`);
                     }
