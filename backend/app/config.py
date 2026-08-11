@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     ALLOWED_USER_EMAILS: str = ""
     
     OPENROUTER_API_KEY: str = ""
-    DEFAULT_AI_MODEL: str = "openai/gpt-5.6-luna"
+    DEFAULT_AI_MODEL: str = "xiaomi/mimo-v2.5"
     FIRESTORE_DATABASE: str = "(default)"
     GCS_BUCKET_NAME: str = ""
     GCS_RECEIPT_PREFIX: str = "receipts"
