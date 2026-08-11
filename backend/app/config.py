@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     ALLOWED_USER_EMAILS: str = ""
     
     OPENROUTER_API_KEY: str = ""
-    DEFAULT_AI_MODEL: str = "google/gemma-4-31b-it"
+    DEFAULT_AI_MODEL: str = "openai/gpt-5.6-luna"
     FIRESTORE_DATABASE: str = "(default)"
     GCS_BUCKET_NAME: str = ""
     GCS_RECEIPT_PREFIX: str = "receipts"

@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="Gemma-4-31b-it を用いた次世代家計簿 AI バックエンド API",
+    description="OpenRouterマルチモーダルAIを用いた次世代家計簿 API",
     version="2.0.0"
 )
 frontend_origins = [origin.strip() for origin in settings.FRONTEND_ORIGINS.split(",") if origin.strip()]

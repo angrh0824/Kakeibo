@@ -137,7 +137,7 @@ async def analyze_receipt_image(image_bytes: bytes, content_type: str = "image/j
         ],
     }
 
-    # GPT-5.6 Luna Pro以外のモデルでは、互換性のため低いtemperatureを指定する。
+    # GPT-5.6系列ではプロバイダ既定の推論設定を使い、その他のモデルには低いtemperatureを指定する。
     if not target_model.startswith("openai/gpt-5.6"):
         payload["temperature"] = 0.1
 
