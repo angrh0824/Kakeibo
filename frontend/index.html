@@ -10,6 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Serif+JP:wght@400;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/billing.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <script src="js/config.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -308,6 +309,51 @@
                     </div>
                 </div>
             </div>
+            <div class="card glass household-billing-card" id="household-billing-card" hidden>
+                <div class="card-header billing-card-header">
+                    <div>
+                        <p class="settings-eyebrow">MONTHLY USAGE</p>
+                        <h3>今月の利用料金</h3>
+                    </div>
+                    <input class="form-input billing-month-input" id="billing-period" type="month" aria-label="利用料金の対象月">
+                </div>
+                <div class="billing-hero">
+                    <div>
+                        <p class="billing-hero-label">お支払い予定額</p>
+                        <p class="billing-hero-value" id="billing-payment-amount">¥0</p>
+                        <p class="billing-hero-note">概算原価 ＋ 管理手数料100%（合計は1円単位へ切り上げ）</p>
+                    </div>
+                    <div class="billing-cost-pair">
+                        <span>概算原価<strong id="billing-base-cost">¥0</strong></span>
+                        <span>管理手数料<strong id="billing-service-fee">¥0</strong></span>
+                    </div>
+                </div>
+                <div class="billing-limit-panel">
+                    <div class="billing-limit-copy">
+                        <span id="billing-limit-label">月額上限 ¥0</span>
+                        <span id="billing-limit-remaining">残り ¥0</span>
+                    </div>
+                    <div class="billing-progress"><span id="billing-limit-progress"></span></div>
+                    <p class="settings-help" id="billing-limit-message">利用状況を読み込み中...</p>
+                </div>
+                <div class="billing-breakdown">
+                    <div><span>AI / OpenRouter</span><strong id="billing-cost-ai">¥0</strong></div>
+                    <div><span>Cloud Run</span><strong id="billing-cost-run">¥0</strong></div>
+                    <div><span>Firestore</span><strong id="billing-cost-firestore">¥0</strong></div>
+                    <div><span>画像ストレージ</span><strong id="billing-cost-storage">¥0</strong></div>
+                </div>
+                <div class="billing-usage-chips" id="billing-usage-chips"></div>
+                <div class="paypay-panel" id="paypay-panel">
+                    <div class="paypay-copy">
+                        <span class="paypay-mark">P</span>
+                        <div><strong>PayPay加盟店QRで手動精算</strong><p id="paypay-recipient">支払先を確認中...</p></div>
+                    </div>
+                    <img id="paypay-qr-image" class="paypay-qr-image" alt="PayPay支払いQRコード" hidden>
+                    <p class="settings-help" id="paypay-qr-empty">加盟店QRは管理者が登録後に表示されます。</p>
+                </div>
+                <p class="billing-estimate-note" id="billing-estimate-note"></p>
+            </div>
+
             <div class="card glass household-access-card">
                 <div class="card-header">
                     <div>
@@ -348,6 +394,32 @@
                 <div class="access-list" id="admin-signup-requests"></div>
                 <h4 class="access-section-title">利用アカウント</h4>
                 <div class="access-list" id="admin-user-list"></div>
+            </div>
+
+            <div class="card glass platform-billing-card" id="platform-billing-card" hidden>
+                <div class="card-header billing-card-header">
+                    <div>
+                        <p class="settings-eyebrow">COST CONTROL</p>
+                        <h3>全家計簿の費用と上限</h3>
+                    </div>
+                    <input class="form-input billing-month-input" id="admin-billing-period" type="month" aria-label="管理料金の対象月">
+                </div>
+                <div class="admin-billing-total">
+                    <span>全家計簿の概算原価<strong id="admin-billing-base-total">¥0</strong></span>
+                    <span>回収予定額<strong id="admin-billing-payment-total">¥0</strong></span>
+                </div>
+                <form class="billing-qr-upload" id="billing-qr-upload-form">
+                    <div>
+                        <strong>PayPay加盟店QRコード</strong>
+                        <p class="settings-help">画像は非公開Cloud Storageへ保存されます。個人用の「送る・受け取る」マイコードは登録しないでください。</p>
+                    </div>
+                    <label class="btn btn-secondary" for="billing-qr-file">QR画像を選択</label>
+                    <input id="billing-qr-file" type="file" accept="image/*" hidden>
+                    <button class="btn btn-primary" type="submit">QRを登録</button>
+                </form>
+                <div class="admin-billing-list" id="admin-billing-list">
+                    <p class="settings-help">料金情報を読み込み中...</p>
+                </div>
             </div>
 
             <div class="card glass data-safety-card">
@@ -519,5 +591,6 @@
     <script src="js/shared-data.js"></script>
     <script src="js/app.js"></script>
     <script src="js/access-management.js"></script>
+    <script src="js/billing.js"></script>
 </body>
 </html>

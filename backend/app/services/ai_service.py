@@ -2,6 +2,7 @@ import base64
 import json
 import httpx
 import logging
+import time
 from typing import Any, Dict, List
 from app.config import settings
 
@@ -10,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 class ReceiptAnalysisError(RuntimeError):
     """Raised when the configured vision model cannot analyze a receipt image."""
+
+    def __init__(self, message: str, usage: Dict[str, Any] | None = None):
+        super().__init__(message)
+        self.usage = usage or {}
 
 
 # 日本のスーパー・コンビニレシート特有の記法に完全対応した超高精度プロンプト
@@ -101,7 +106,9 @@ JAPANESE_RECEIPT_PROMPT = """
 必ず余計な解説やMarkdown装飾（```jsonなど）を含めず、ValidなJSONオブジェクトのみを返してください。
 """
 
-async def analyze_receipt_image(image_bytes: bytes, content_type: str = "image/jpeg") -> Dict[str, List[Dict[str, Any]]]:
+async def analyze_receipt_image(
+    image_bytes: bytes, content_type: str = "image/jpeg", household_id: str = ""
+) -> Dict[str, Any]:
     """
     レシート画像を Base64 に変換し、OpenRouter 上の高精度ビジョンAIに送信して構造化データを取得する関数
     """
@@ -136,11 +143,15 @@ async def analyze_receipt_image(image_bytes: bytes, content_type: str = "image/j
             }
         ],
     }
+    if household_id:
+        payload["user"] = household_id[:256]
 
     # GPT-5.6系列ではプロバイダ既定の推論設定を使い、その他のモデルには低いtemperatureを指定する。
     if not target_model.startswith("openai/gpt-5.6"):
         payload["temperature"] = 0.1
 
+    usage_details: Dict[str, Any] = {}
+    started_at = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
@@ -150,6 +161,20 @@ async def analyze_receipt_image(image_bytes: bytes, content_type: str = "image/j
             )
             response.raise_for_status()
             res_json = response.json()
+            raw_usage = res_json.get("usage") if isinstance(res_json.get("usage"), dict) else {}
+            completion_details = raw_usage.get("completion_tokens_details")
+            if not isinstance(completion_details, dict):
+                completion_details = {}
+            usage_details = {
+                "request_id": str(res_json.get("id") or ""),
+                "model": str(res_json.get("model") or target_model),
+                "prompt_tokens": int(raw_usage.get("prompt_tokens") or 0),
+                "completion_tokens": int(raw_usage.get("completion_tokens") or 0),
+                "reasoning_tokens": int(completion_details.get("reasoning_tokens") or 0),
+                "total_tokens": int(raw_usage.get("total_tokens") or 0),
+                "cost_usd": float(raw_usage.get("cost") or 0),
+                "duration_ms": max(0, int((time.perf_counter() - started_at) * 1000)),
+            }
             raw_content = res_json["choices"][0]["message"].get("content")
             if isinstance(raw_content, list):
                 raw_content = "\n".join(
@@ -179,9 +204,13 @@ async def analyze_receipt_image(image_bytes: bytes, content_type: str = "image/j
                     parsed_result = json.loads(raw_content[start:end + 1])
                 except json.JSONDecodeError as parse_error:
                     raise ReceiptAnalysisError("AIの応答をJSONとして解釈できませんでした。") from parse_error
-            return normalize_receipt_batch(parsed_result)
+            result = normalize_receipt_batch(parsed_result)
+            result["_usage"] = usage_details
+            return result
 
-    except ReceiptAnalysisError:
+    except ReceiptAnalysisError as exc:
+        if not exc.usage and usage_details:
+            exc.usage = usage_details
         raise
     except httpx.HTTPStatusError as e:
         logger.error("OpenRouter APIエラー: %s", e, exc_info=True)
@@ -193,7 +222,9 @@ async def analyze_receipt_image(image_bytes: bytes, content_type: str = "image/j
         raise ReceiptAnalysisError("AI解析サービスに接続できませんでした。") from e
     except Exception as e:
         logger.error("AI画像解析に失敗しました: %s", e, exc_info=True)
-        raise ReceiptAnalysisError("AIから返った解析結果を読み取れませんでした。") from e
+        raise ReceiptAnalysisError(
+            "AIから返った解析結果を読み取れませんでした。", usage=usage_details
+        ) from e
 
 def _to_int(value: Any, default: int = 0) -> int:
     """Convert common receipt number formats (¥1,234 / 1234.0) to yen."""

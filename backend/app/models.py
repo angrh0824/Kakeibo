@@ -20,6 +20,10 @@ class HouseholdInviteCreate(BaseModel):
         return normalized
 
 
+class HouseholdBillingLimitUpdate(BaseModel):
+    monthly_limit_jpy: int = Field(ge=0, le=1_000_000)
+
+
 class ReceiptItemWrite(BaseModel):
     name: str = Field(min_length=1, max_length=300)
     price: int = Field(default=0, ge=0, le=100_000_000)
