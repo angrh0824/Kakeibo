@@ -1137,6 +1137,8 @@ function initUploadModal() {
 
         approveBtn.style.display = step === 3 ? 'inline-flex' : 'none';
         cancelBtn.textContent = step === 3 ? '破棄する' : 'キャンセル';
+        const modalBody = modal.querySelector('.modal-body');
+        if (modalBody) modalBody.scrollTop = 0;
     }
 
     // ファイル選択
@@ -1187,8 +1189,8 @@ function initUploadModal() {
         analyzeFiles(selectedFiles);
     }
 
-    // 実画像解析
-    function analyzeFiles(files) {
+    // 実画像解析。APIへの送信は進捗演出より先に開始し、不要な待機を作らない。
+    async function analyzeFiles(files) {
         const status = document.getElementById('analysis-status');
         const ocrProgress = document.getElementById('ocr-progress');
         const parseProgress = document.getElementById('parse-progress');
@@ -1198,94 +1200,109 @@ function initUploadModal() {
         const classifyStep = document.getElementById('a-step-classify');
 
         status.classList.remove('error');
-        [ocrProgress, parseProgress, classifyProgress].forEach(p => p.style.width = '0%');
+        [ocrProgress, parseProgress, classifyProgress].forEach(progress => {
+            progress.classList.remove('is-indeterminate');
+            progress.style.width = '0%';
+        });
         [ocrStep, parseStep, classifyStep].forEach(s => {
-            s.classList.remove('active', 'completed');
+            s.classList.remove('active', 'completed', 'error');
             s.querySelector('.a-step-status').textContent = '待機中';
         });
 
-        // Step 1: OCR
+        // リクエストを直ちに開始する。失敗も値として保持し、画面遷移中の未処理例外を防ぐ。
+        const analysisRequest = requestReceiptAnalysis(files).then(
+            resultData => ({ ok: true, resultData }),
+            error => ({ ok: false, error })
+        );
+
+        // Step 1: 画像送信（この演出中にも実際のリクエストは進行している）
         ocrStep.classList.add('active');
-        ocrStep.querySelector('.a-step-status').textContent = '処理中...';
-        status.textContent = 'OCR文字認識を実行中...';
-        animateProgress(ocrProgress, 1000, async () => {
+        ocrStep.querySelector('.a-step-status').textContent = '送信中...';
+        status.textContent = '画像を解析APIへ送信しています...';
+
+        try {
+            await animateProgress(ocrProgress, 350);
             ocrStep.classList.remove('active');
             ocrStep.classList.add('completed');
-            ocrStep.querySelector('.a-step-status').textContent = '完了 ✓';
+            ocrStep.querySelector('.a-step-status').textContent = '送信済み ✓';
 
-            // Step 2: Parse
+            // Step 2: OCR・品目抽出・金額補正・カテゴリ分類をAIが一括で行う。
             parseStep.classList.add('active');
             parseStep.querySelector('.a-step-status').textContent = '処理中...';
-            status.textContent = 'AI構造化解析中...';
-            animateProgress(parseProgress, 1000, async () => {
-                parseStep.classList.remove('active');
-                parseStep.classList.add('completed');
-                parseStep.querySelector('.a-step-status').textContent = '完了 ✓';
+            status.textContent = 'AIが文字・品目・金額・カテゴリを一括解析中...';
+            parseProgress.classList.add('is-indeterminate');
 
-                // Step 3: Classify
-                classifyStep.classList.add('active');
-                classifyStep.querySelector('.a-step-status').textContent = '処理中...';
-                status.textContent = 'カテゴリ分類中...';
+            const outcome = await analysisRequest;
+            if (!outcome.ok) throw outcome.error;
+            const resultData = outcome.resultData;
 
-                // バックエンドAPIで実画像を解析する。API障害時にテストデータへは切り替えない。
-                let resultData;
-                try {
-                    const formData = new FormData();
-                    files.forEach(file => formData.append('files', file));
-                    const authHeaders = window.KakeiboAuth?.getAuthorizationHeaders?.() || {};
-                    if (window.KakeiboAuth?.enabled && !authHeaders.Authorization) {
-                        window.KakeiboAuth.handleUnauthorized();
-                        throw new Error('Googleログインが必要です。');
-                    }
-                    const res = await fetch(getReceiptAnalyzeUrl(), {
-                        method: 'POST',
-                        headers: authHeaders,
-                        body: formData
-                    });
-                    const resJson = await res.json().catch(() => ({}));
-                    if (res.status === 401 || res.status === 403) {
-                        window.KakeiboAuth?.handleUnauthorized?.(resJson.detail || 'このGoogleアカウントでは利用できません。');
-                    }
-                    if (!res.ok) {
-                        throw new Error(resJson.detail || `解析APIエラー (${res.status})`);
-                    }
-                    if (!resJson.success) throw new Error(resJson.detail || '解析APIが失敗しました');
-                    resultData = normalizeAnalysisResults(resJson);
-                    if (resultData.length === 0) throw new Error('画像からレシートを検出できませんでした');
-                } catch (e) {
-                    const message = e instanceof Error ? e.message : '画像解析に失敗しました';
-                    console.error('実画像解析に失敗しました:', e);
-                    [ocrStep, parseStep, classifyStep].forEach(step => {
-                        step.classList.remove('active');
-                        step.classList.add('error');
-                        step.querySelector('.a-step-status').textContent = '失敗';
-                    });
-                    status.classList.add('error');
-                    status.textContent = message;
-                    showToast(message, '⚠️');
-                    setTimeout(() => {
-                        goToStep(1);
-                        fileInput.value = '';
-                    }, 700);
-                    return;
-                }
+            parseProgress.classList.remove('is-indeterminate');
+            parseProgress.style.width = '100%';
+            parseStep.classList.remove('active');
+            parseStep.classList.add('completed');
+            parseStep.querySelector('.a-step-status').textContent = '完了 ✓';
 
-                animateProgress(classifyProgress, 600, () => {
-                    classifyStep.classList.remove('active');
-                    classifyStep.classList.add('completed');
-                    classifyStep.querySelector('.a-step-status').textContent = '完了 ✓';
-                    status.textContent = '解析完了！';
+            // Step 3: 受信済みデータを画面表示用に整える短い工程。
+            classifyStep.classList.add('active');
+            classifyStep.querySelector('.a-step-status').textContent = '準備中...';
+            status.textContent = '解析結果を表示する準備中...';
+            await animateProgress(classifyProgress, 220);
+            classifyStep.classList.remove('active');
+            classifyStep.classList.add('completed');
+            classifyStep.querySelector('.a-step-status').textContent = '完了 ✓';
+            status.textContent = '解析完了！';
 
-                    setTimeout(() => {
-                        reviewQueue = resultData;
-                        currentReviewIndex = 0;
-                        registeredReceiptCount = 0;
-                        goToStep(3);
-                        showReviewForm(reviewQueue[currentReviewIndex]);
-                    }, 400);
-                });
+            reviewQueue = resultData;
+            currentReviewIndex = 0;
+            registeredReceiptCount = 0;
+            goToStep(3);
+            showReviewForm(reviewQueue[currentReviewIndex]);
+        } catch (e) {
+            const message = e instanceof Error ? e.message : '画像解析に失敗しました';
+            console.error('実画像解析に失敗しました:', e);
+            [ocrProgress, parseProgress, classifyProgress].forEach(progress => {
+                progress.classList.remove('is-indeterminate');
             });
+            [ocrStep, parseStep, classifyStep].forEach(step => {
+                step.classList.remove('active', 'completed');
+                step.classList.add('error');
+                step.querySelector('.a-step-status').textContent = '失敗';
+            });
+            status.classList.add('error');
+            status.textContent = message;
+            showToast(message, '⚠️');
+            setTimeout(() => {
+                goToStep(1);
+                fileInput.value = '';
+            }, 700);
+        }
+    }
+
+    // バックエンドAPIで実画像を解析する。API障害時にテストデータへは切り替えない。
+    async function requestReceiptAnalysis(files) {
+        const formData = new FormData();
+        files.forEach(file => formData.append('files', file));
+        const authHeaders = window.KakeiboAuth?.getAuthorizationHeaders?.() || {};
+        if (window.KakeiboAuth?.enabled && !authHeaders.Authorization) {
+            window.KakeiboAuth.handleUnauthorized();
+            throw new Error('Googleログインが必要です。');
+        }
+
+        const res = await fetch(getReceiptAnalyzeUrl(), {
+            method: 'POST',
+            headers: authHeaders,
+            body: formData
         });
+        const resJson = await res.json().catch(() => ({}));
+        if (res.status === 401 || res.status === 403) {
+            window.KakeiboAuth?.handleUnauthorized?.(resJson.detail || 'このGoogleアカウントでは利用できません。');
+        }
+        if (!res.ok) throw new Error(resJson.detail || `解析APIエラー (${res.status})`);
+        if (!resJson.success) throw new Error(resJson.detail || '解析APIが失敗しました');
+
+        const resultData = normalizeAnalysisResults(resJson);
+        if (resultData.length === 0) throw new Error('画像からレシートを検出できませんでした');
+        return resultData;
     }
 
     function getReceiptAnalyzeUrl() {
@@ -1316,19 +1333,18 @@ function initUploadModal() {
         return receipts;
     }
 
-    function animateProgress(fillEl, duration, callback) {
-        const start = performance.now();
-        function update(now) {
-            const elapsed = now - start;
-            const progress = Math.min(elapsed / duration, 1);
-            fillEl.style.width = (progress * 100) + '%';
-            if (progress < 1) {
-                requestAnimationFrame(update);
-            } else {
-                if (callback) callback();
+    function animateProgress(fillEl, duration) {
+        return new Promise(resolve => {
+            const start = performance.now();
+            function update(now) {
+                const elapsed = now - start;
+                const progress = Math.min(elapsed / duration, 1);
+                fillEl.style.width = (progress * 100) + '%';
+                if (progress < 1) requestAnimationFrame(update);
+                else resolve();
             }
-        }
-        requestAnimationFrame(update);
+            requestAnimationFrame(update);
+        });
     }
 
     // レビューフォーム表示
@@ -1343,6 +1359,10 @@ function initUploadModal() {
         reviewItems = (Array.isArray(result && result.items) ? result.items : []).map((item, i) => ({ ...item, id: i }));
         updateReviewBatchStatus();
         renderReviewItems();
+        const modalBody = modal.querySelector('.modal-body');
+        if (modalBody) modalBody.scrollTop = 0;
+        const itemsScroll = document.querySelector('.review-items-scroll');
+        if (itemsScroll) itemsScroll.scrollLeft = 0;
     }
 
     function updateReviewBatchStatus() {
@@ -1363,18 +1383,18 @@ function initUploadModal() {
 
         tbody.innerHTML = reviewItems.map((item, index) => `
             <tr data-index="${index}">
-                <td><input type="text" value="${item.name}" class="review-item-name" data-index="${index}"></td>
-                <td class="col-price"><input type="number" value="${item.price}" class="review-item-price" data-index="${index}" min="0"></td>
-                <td class="col-qty"><input type="number" value="${item.quantity}" class="review-item-qty" data-index="${index}" min="1"></td>
-                <td class="col-category">
+                <td data-label="品名"><input type="text" value="${escapeHtml(item.name)}" class="review-item-name" data-index="${index}"></td>
+                <td class="col-price" data-label="単価"><input type="number" value="${item.price}" class="review-item-price" data-index="${index}" min="0"></td>
+                <td class="col-qty" data-label="数量"><input type="number" value="${item.quantity}" class="review-item-qty" data-index="${index}" min="1"></td>
+                <td class="col-category" data-label="カテゴリ">
                     <select class="review-item-category" data-index="${index}">
                         ${appData.categories.map(c =>
                             `<option value="${c.name}" ${c.name === item.category ? 'selected' : ''}>${c.name}</option>`
                         ).join('')}
                     </select>
                 </td>
-                <td class="col-subtotal">${formatCurrency(getItemLineTotal(item))}</td>
-                <td class="col-action"><button class="btn-danger review-item-delete" data-index="${index}" type="button" title="削除">✕</button></td>
+                <td class="col-subtotal" data-label="小計">${formatCurrency(getItemLineTotal(item))}</td>
+                <td class="col-action"><button class="btn-danger review-item-delete" data-index="${index}" type="button" title="削除" aria-label="品目を削除">✕</button></td>
             </tr>
         `).join('');
 
@@ -1551,7 +1571,10 @@ function initUploadModal() {
         const batchStatus = document.getElementById('review-batch-status');
         if (batchStatus) batchStatus.hidden = true;
         cancelBtn.textContent = 'キャンセル';
-        [document.getElementById('ocr-progress'), document.getElementById('parse-progress'), document.getElementById('classify-progress')].forEach(p => p.style.width = '0%');
+        [document.getElementById('ocr-progress'), document.getElementById('parse-progress'), document.getElementById('classify-progress')].forEach(progress => {
+            progress.classList.remove('is-indeterminate');
+            progress.style.width = '0%';
+        });
     }
 
     window.openReceiptEditor = function(receipt) {
