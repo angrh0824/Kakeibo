@@ -2,10 +2,12 @@
     'use strict';
 
     const TOKEN_KEY = 'kakeibo.googleIdToken.v1';
-    const USER_KEY = 'kakeibo.googleUser.v1';
+    const USER_KEY = 'kakeibo.googleUser.v2';
+    const HOUSEHOLD_KEY = 'kakeibo.activeHousehold.v1';
     const clientId = String(window.KAKEIBO_GOOGLE_CLIENT_ID || '').trim();
     const enabled = clientId.length > 0;
     let googleButtonRendered = false;
+    let currentUser = null;
 
     function getApiBaseUrl() {
         const configuredBase = String(window.KAKEIBO_API_BASE_URL || '').trim();
@@ -36,13 +38,25 @@
         return token;
     }
 
+    function getHouseholdId() {
+        return String(localStorage.getItem(HOUSEHOLD_KEY) || currentUser?.household?.id || '').trim();
+    }
+
+    function normalizeDetail(detail, fallback) {
+        if (typeof detail === 'string' && detail) return detail;
+        if (detail && typeof detail === 'object' && detail.message) return String(detail.message);
+        return fallback;
+    }
+
     function setSidebarUser(user) {
         const name = document.getElementById('signed-in-user-name');
         const email = document.getElementById('signed-in-user-email');
         const avatar = document.getElementById('signed-in-user-avatar');
+        const household = document.getElementById('active-household-name');
         const signOut = document.getElementById('btn-sign-out');
-        if (name) name.textContent = user?.name || '家族ユーザー';
+        if (name) name.textContent = user?.name || 'ユーザー';
         if (email) email.textContent = user?.email || '';
+        if (household) household.textContent = user?.household?.name || '家計簿を選択';
         if (avatar) {
             avatar.textContent = (user?.name || user?.email || '家').trim().charAt(0).toUpperCase();
             if (user?.picture) {
@@ -84,18 +98,31 @@
     function clearSession() {
         sessionStorage.removeItem(TOKEN_KEY);
         sessionStorage.removeItem(USER_KEY);
+        currentUser = null;
         setSidebarUser(null);
     }
 
-    async function validateToken(token) {
-        const response = await fetch(`${getApiBaseUrl()}/api/auth/me`, {
-            headers: { Authorization: `Bearer ${token}` }
-        });
+    function applyAuthPayload(payload) {
+        const user = {
+            ...(payload.user || {}),
+            household: payload.household || null,
+            households: Array.isArray(payload.households) ? payload.households : [],
+        };
+        currentUser = user;
+        if (user.household?.id) localStorage.setItem(HOUSEHOLD_KEY, user.household.id);
+        sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+        return user;
+    }
+
+    async function validateToken(token, householdId = getHouseholdId()) {
+        const headers = { Authorization: `Bearer ${token}` };
+        if (householdId) headers['X-Household-ID'] = householdId;
+        const response = await fetch(`${getApiBaseUrl()}/api/auth/me`, { headers });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.authenticated || !payload.user) {
-            throw new Error(payload.detail || 'このGoogleアカウントではログインできません。');
+            throw new Error(normalizeDetail(payload.detail, 'このGoogleアカウントではログインできません。'));
         }
-        return payload.user;
+        return applyAuthPayload(payload);
     }
 
     async function handleCredentialResponse(response) {
@@ -104,11 +131,10 @@
             showGate('Googleから認証情報を受け取れませんでした。');
             return;
         }
-        setError('ログインを確認しています…');
+        setError('ログインと利用権限を確認しています…');
         try {
             const user = await validateToken(token);
             sessionStorage.setItem(TOKEN_KEY, token);
-            sessionStorage.setItem(USER_KEY, JSON.stringify(user));
             hideGate(user);
             window.dispatchEvent(new CustomEvent('kakeibo:authenticated', { detail: user }));
         } catch (error) {
@@ -146,11 +172,7 @@
                 cancel_on_tap_outside: false,
             });
             googleIdentity.renderButton(container, {
-                type: 'standard',
-                theme: 'filled_black',
-                size: 'large',
-                shape: 'pill',
-                text: 'signin_with',
+                type: 'standard', theme: 'filled_black', size: 'large', shape: 'pill', text: 'signin_with',
                 width: Math.min(320, Math.max(200, Math.floor(container.getBoundingClientRect().width || window.innerWidth - 68))),
                 locale: 'ja',
             });
@@ -160,47 +182,59 @@
         }
     }
 
+    async function selectHousehold(householdId) {
+        const token = getToken();
+        if (!token) throw new Error('もう一度ログインしてください。');
+        const user = await validateToken(token, String(householdId || ''));
+        hideGate(user);
+        window.dispatchEvent(new CustomEvent('kakeibo:household-changed', { detail: user }));
+        return user;
+    }
+
     async function initialize() {
-        const signOut = document.getElementById('btn-sign-out');
-        signOut?.addEventListener('click', () => {
+        document.getElementById('btn-sign-out')?.addEventListener('click', () => {
             clearSession();
             window.google?.accounts?.id?.disableAutoSelect();
             window.dispatchEvent(new CustomEvent('kakeibo:signed-out'));
             showGate('ログアウトしました。');
         });
-
         if (!enabled) {
             document.body.classList.remove('auth-pending', 'auth-required');
             setSidebarUser(null);
             return;
         }
-
         const token = getToken();
         if (!token) {
             showGate();
             return;
         }
-
         try {
             const user = await validateToken(token);
             hideGate(user);
             window.dispatchEvent(new CustomEvent('kakeibo:authenticated', { detail: user }));
-        } catch (_) {
+        } catch (error) {
             clearSession();
-            showGate('ログインの有効期限が切れました。もう一度ログインしてください。');
+            showGate(error instanceof Error ? error.message : 'ログインの有効期限が切れました。もう一度ログインしてください。');
         }
     }
 
     window.KakeiboAuth = {
         enabled,
         getToken,
+        getUser: () => currentUser,
+        getHouseholdId,
+        selectHousehold,
         getAuthorizationHeaders() {
             const token = getToken();
-            return token ? { Authorization: `Bearer ${token}` } : {};
+            if (!token) return {};
+            const headers = { Authorization: `Bearer ${token}` };
+            const householdId = getHouseholdId();
+            if (householdId) headers['X-Household-ID'] = householdId;
+            return headers;
         },
         handleUnauthorized(message = 'ログインの有効期限が切れました。もう一度ログインしてください。') {
             clearSession();
-            showGate(message);
+            showGate(normalizeDetail(message, 'このGoogleアカウントでは利用できません。'));
         }
     };
 

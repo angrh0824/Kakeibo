@@ -9,6 +9,12 @@
         return String(configured || fallback).replace(/\/+$/, '');
     }
 
+    function detailMessage(detail, fallback) {
+        if (typeof detail === 'string' && detail) return detail;
+        if (detail && typeof detail === 'object' && detail.message) return String(detail.message);
+        return fallback;
+    }
+
     function makeUrl(path) {
         const normalized = String(path || '').startsWith('/') ? path : `/${path}`;
         return `${getBaseUrl()}/api${normalized}`;
@@ -30,7 +36,7 @@
         const response = await fetch(makeUrl(path), { ...options, headers });
         if (response.status === 401 || response.status === 403) {
             const payload = await response.clone().json().catch(() => ({}));
-            window.KakeiboAuth?.handleUnauthorized?.(payload.detail || 'このGoogleアカウントでは利用できません。');
+            window.KakeiboAuth?.handleUnauthorized?.(detailMessage(payload.detail, 'このGoogleアカウントでは利用できません。'));
         }
         return response;
     }
@@ -39,7 +45,7 @@
         const response = await request(path, options);
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(payload.detail || `共有データAPIエラー (${response.status})`);
+            throw new Error(detailMessage(payload.detail, `共有データAPIエラー (${response.status})`));
         }
         return payload;
     }

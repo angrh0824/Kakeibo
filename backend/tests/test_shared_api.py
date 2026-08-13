@@ -4,6 +4,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.auth import AuthenticatedUser, require_authorized_user
 from app.models import ReceiptWrite
 
 
@@ -29,6 +30,9 @@ class SharedReceiptApiTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
 
+    def tearDown(self):
+        app.dependency_overrides.clear()
+
     def test_receipt_total_is_derived_from_tax_adjusted_lines(self):
         receipt = ReceiptWrite.model_validate(SAMPLE)
         self.assertEqual(receipt.total, 198)
@@ -42,14 +46,14 @@ class SharedReceiptApiTests(unittest.TestCase):
 
     @patch("app.api.endpoints.create_receipt")
     def test_create_shared_receipt(self, create_receipt):
-        create_receipt.side_effect = lambda payload, user: {"id": "r2", **payload.model_dump(mode="json")}
+        create_receipt.side_effect = lambda household_id, payload, user: {"id": "r2", **payload.model_dump(mode="json")}
         response = self.client.post("/api/receipts", json=SAMPLE)
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["receipt"]["total"], 198)
 
     @patch("app.api.endpoints.update_receipt")
     def test_update_shared_receipt(self, update_receipt):
-        update_receipt.side_effect = lambda receipt_id, payload, user: {"id": receipt_id, **payload.model_dump(mode="json")}
+        update_receipt.side_effect = lambda household_id, receipt_id, payload, user: {"id": receipt_id, **payload.model_dump(mode="json")}
         response = self.client.put("/api/receipts/r1", json=SAMPLE)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["receipt"]["id"], "r1")
@@ -74,13 +78,36 @@ class SharedReceiptApiTests(unittest.TestCase):
     @patch("app.api.endpoints.download_receipt_image")
     @patch("app.api.endpoints.get_receipt")
     def test_private_receipt_image(self, get_receipt, download_receipt_image):
-        get_receipt.return_value = {"image_storage": {"object_name": "receipts/2026/08/test.jpg"}}
+        get_receipt.return_value = {"image_storage": {"object_name": "receipts/family-main/2026/08/test.jpg"}}
         download_receipt_image.return_value = (b"jpeg", "image/jpeg")
         response = self.client.get("/api/receipts/r1/image")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"jpeg")
         self.assertEqual(response.headers["content-type"], "image/jpeg")
 
+    @patch("app.api.endpoints.list_receipts")
+    def test_selected_household_is_forwarded_to_storage(self, list_receipts):
+        list_receipts.return_value = []
+        app.dependency_overrides[require_authorized_user] = lambda: AuthenticatedUser(
+            subject="friend-1",
+            email="friend@example.com",
+            name="Friend",
+            status="active",
+            household_id="personal-friend",
+            household_name="Friendの家計簿",
+            household_role="owner",
+        )
+        response = self.client.get("/api/receipts")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["household_id"], "personal-friend")
+        list_receipts.assert_called_once_with("personal-friend")
+
+    @patch("app.api.endpoints.approve_signup")
+    def test_admin_can_approve_signup(self, approve_signup):
+        approve_signup.return_value = {"subject": "new-user", "email": "new@example.com", "status": "active"}
+        response = self.client.post("/api/admin/signup-requests/new-user/approve")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["user"]["status"], "active")
 
 if __name__ == "__main__":
     unittest.main()

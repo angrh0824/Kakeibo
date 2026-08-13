@@ -21,9 +21,9 @@
     <div class="auth-gate" id="auth-gate" aria-hidden="false">
         <div class="auth-card">
             <div class="auth-mark" aria-hidden="true">家</div>
-            <p class="auth-eyebrow">PRIVATE FAMILY FINANCE</p>
-            <h1>家族の家計簿へログイン</h1>
-            <p class="auth-description">許可されたGoogleアカウントだけが、家族共通のレシート・商品情報・画像を利用できます。</p>
+            <p class="auth-eyebrow">PRIVATE &amp; SHARED FINANCE</p>
+            <h1>あなたの家計簿へログイン</h1>
+            <p class="auth-description">Googleアカウントごとに独立した家計簿を作成し、招待した人とだけ安全に共有できます。初回利用は管理者の承認が必要です。</p>
             <div class="google-signin-button" id="google-signin-button"></div>
             <p class="auth-error" id="auth-error" hidden></p>
             <p class="auth-note">パスワードをこのサイトへ保存することはありません。</p>
@@ -62,13 +62,15 @@
             <a href="#" class="nav-item" data-page="settings">
                 <span class="nav-icon">⚙️</span>
                 <span class="nav-label">設定</span>
+                <span class="nav-request-dot" id="admin-nav-request-count" hidden>0</span>
             </a>
         </nav>
         <div class="sidebar-footer">
             <div class="user-info">
                 <div class="avatar" id="signed-in-user-avatar">家</div>
                 <div class="user-details">
-                    <p class="user-name" id="signed-in-user-name">家族ユーザー</p>
+                    <p class="user-name" id="signed-in-user-name">ユーザー</p>
+                    <p class="user-household" id="active-household-name">家計簿を選択</p>
                     <p class="user-email" id="signed-in-user-email"></p>
                 </div>
             </div>
@@ -306,9 +308,51 @@
                     </div>
                 </div>
             </div>
+            <div class="card glass household-access-card">
+                <div class="card-header">
+                    <div>
+                        <p class="settings-eyebrow">HOUSEHOLD ACCESS</p>
+                        <h3>家計簿とメンバー</h3>
+                    </div>
+                    <span class="badge" id="household-role-badge">MEMBER</span>
+                </div>
+                <div class="form-group household-switcher-wrap">
+                    <label for="household-selector">表示する家計簿</label>
+                    <select class="form-input select-input" id="household-selector"></select>
+                </div>
+                <form class="household-invite-form" id="household-invite-form">
+                    <div class="form-group">
+                        <label for="household-invite-email">Googleアカウントのメールアドレス</label>
+                        <div class="inline-form-row">
+                            <input class="form-input" id="household-invite-email" type="email" autocomplete="email" placeholder="family@example.com" required>
+                            <button class="btn btn-primary" type="submit">招待する</button>
+                        </div>
+                    </div>
+                    <p class="settings-help">招待された人は、管理者による初回利用承認後、この家計簿を選択できます。</p>
+                </form>
+                <div class="access-list" id="household-members-list">
+                    <p class="settings-help">メンバー情報を読み込み中...</p>
+                </div>
+            </div>
+
+            <div class="card glass platform-admin-card" id="platform-admin-card" hidden>
+                <div class="card-header">
+                    <div>
+                        <p class="settings-eyebrow">PLATFORM CONTROL</p>
+                        <h3>利用申請とアカウント管理</h3>
+                    </div>
+                    <span class="badge admin-request-badge" id="admin-request-count">0 PENDING</span>
+                </div>
+                <p class="data-safety-copy">初回ログインの申請を承認し、必要に応じて利用者を即時BAN・解除できます。</p>
+                <h4 class="access-section-title">承認待ち</h4>
+                <div class="access-list" id="admin-signup-requests"></div>
+                <h4 class="access-section-title">利用アカウント</h4>
+                <div class="access-list" id="admin-user-list"></div>
+            </div>
+
             <div class="card glass data-safety-card">
-                <div class="card-header"><h3>家族共有Data</h3><span class="badge">CLOUD SYNC</span></div>
-                <p class="data-safety-copy">許可された家族全員が、Google Cloud上の同じレシート・商品情報・画像を利用します。</p>
+                <div class="card-header"><h3>選択中の家計簿Data</h3><span class="badge">CLOUD SYNC</span></div>
+                <p class="data-safety-copy">選択中の家計簿メンバーだけが、Google Cloud上のレシート・商品情報・画像を利用できます。他の家計簿とは完全に分離されます。</p>
                 <div class="data-safety-actions">
                     <button class="btn btn-secondary" id="btn-export-data" type="button">バックアップを書き出す</button>
                     <button class="btn btn-primary" id="btn-sync-data" type="button">今すぐ同期</button>
@@ -474,5 +518,6 @@
     <script src="js/auth.js"></script>
     <script src="js/shared-data.js"></script>
     <script src="js/app.js"></script>
+    <script src="js/access-management.js"></script>
 </body>
 </html>

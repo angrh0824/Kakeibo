@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     AUTH_REQUIRED: bool = False
     GOOGLE_OAUTH_CLIENT_ID: str = ""
     ALLOWED_USER_EMAILS: str = ""
+    PLATFORM_ADMIN_EMAILS: str = ""
+    LEGACY_HOUSEHOLD_ID: str = "family-main"
+    LEGACY_HOUSEHOLD_NAME: str = "わが家の家計簿"
+    ALLOW_SIGNUP_REQUESTS: bool = True
     
     OPENROUTER_API_KEY: str = ""
     DEFAULT_AI_MODEL: str = "google/gemini-2.5-flash-lite"

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import hashlib
+import re
 import uuid
 from typing import Any, Dict, Optional, Tuple
 
@@ -104,14 +105,17 @@ def _validate_object_name(object_name: str) -> str:
     return normalized
 
 
-def upload_receipt_image(image_bytes: bytes) -> Optional[Dict[str, Any]]:
-    """Upload a compressed image when a bucket is configured; otherwise no-op."""
+def upload_receipt_image(image_bytes: bytes, household_id: str) -> Optional[Dict[str, Any]]:
+    """Upload a compressed image under the selected household namespace."""
     if not settings.GCS_BUCKET_NAME:
         return None
 
+    safe_household_id = re.sub(r"[^a-zA-Z0-9_-]", "-", household_id).strip("-")
+    if not safe_household_id:
+        raise ImageStorageError("画像を保存する家計簿が選択されていません。")
     digest = hashlib.sha256(image_bytes).hexdigest()[:16]
     object_name = (
-        f"{_prefix()}/{datetime.now(timezone.utc):%Y/%m}/"
+        f"{_prefix()}/{safe_household_id}/{datetime.now(timezone.utc):%Y/%m}/"
         f"{digest}-{uuid.uuid4().hex}.jpg"
     )
     try:

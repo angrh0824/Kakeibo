@@ -6,6 +6,20 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+
+
+class HouseholdInviteCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
+            raise ValueError("有効なメールアドレスを指定してください。")
+        return normalized
+
+
 class ReceiptItemWrite(BaseModel):
     name: str = Field(min_length=1, max_length=300)
     price: int = Field(default=0, ge=0, le=100_000_000)

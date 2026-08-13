@@ -1505,3 +1505,122 @@ body.auth-required {
     .auth-description { margin-bottom: 16px; line-height: 1.55; }
     .auth-note { margin-top: 14px; }
 }
+
+/* ===== Multi-household access and platform administration ===== */
+.user-household {
+    max-width: 178px;
+    margin: 2px 0;
+    overflow: hidden;
+    color: var(--accent-light);
+    font-size: 10px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.household-access-card,
+.platform-admin-card {
+    grid-column: 1 / -1;
+    margin-top: 24px;
+}
+.settings-eyebrow {
+    margin-bottom: 4px;
+    color: var(--accent-light);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+}
+.household-switcher-wrap { margin: 4px 0 18px; }
+.household-switcher-wrap .select-input { width: min(100%, 520px); }
+.household-invite-form {
+    margin-bottom: 20px;
+    padding: 18px;
+    border: 1px solid rgba(209, 173, 103, 0.18);
+    border-radius: var(--radius-lg);
+    background: linear-gradient(135deg, rgba(209, 173, 103, 0.08), rgba(104, 217, 193, 0.035));
+}
+.household-invite-form[hidden] { display: none; }
+.inline-form-row { display: flex; gap: 10px; }
+.inline-form-row .form-input { flex: 1; min-width: 0; }
+.settings-help {
+    margin-top: 9px;
+    color: var(--text-light);
+    font-size: 11px;
+    line-height: 1.65;
+}
+.access-section-title {
+    margin: 20px 0 10px;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+.access-list { display: grid; gap: 9px; }
+.access-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    min-width: 0;
+    padding: 13px 15px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.025);
+}
+.access-item-main { min-width: 0; }
+.access-item-name {
+    overflow: hidden;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.access-item-meta {
+    margin-top: 3px;
+    overflow: hidden;
+    color: var(--text-light);
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.access-item-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+.access-item-actions .btn { padding: 7px 10px; font-size: 10px; }
+.access-role {
+    display: inline-flex;
+    margin-left: 7px;
+    padding: 2px 6px;
+    color: var(--accent-light);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    border: 1px solid rgba(209, 173, 103, 0.24);
+    border-radius: 999px;
+}
+.access-status-banned { color: #ff9fa7; }
+.admin-request-badge.has-pending {
+    color: #190d0f;
+    border-color: rgba(255, 177, 183, 0.7);
+    background: linear-gradient(135deg, #ffbdc2, #e87983);
+    box-shadow: 0 0 22px rgba(242, 139, 146, 0.24);
+}
+.nav-request-dot {
+    display: inline-grid;
+    place-items: center;
+    min-width: 18px;
+    height: 18px;
+    margin-left: auto;
+    padding: 0 5px;
+    color: #16090b;
+    font-size: 9px;
+    font-weight: 800;
+    border-radius: 999px;
+    background: #ff9fa7;
+}
+.nav-request-dot[hidden] { display: none; }
+@media (max-width: 620px) {
+    .inline-form-row { flex-direction: column; }
+    .inline-form-row .btn { width: 100%; justify-content: center; }
+    .access-item { align-items: flex-start; flex-direction: column; }
+    .access-item-actions { width: 100%; }
+    .access-item-actions .btn { flex: 1; justify-content: center; }
+}

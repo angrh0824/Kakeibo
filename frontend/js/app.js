@@ -140,7 +140,8 @@ function updateStorageStatus(message = '') {
         return;
     }
     const savedAt = new Date(lastSharedSyncAt).toLocaleString('ja-JP');
-    status.textContent = `家族共有クラウド：${appData.receipts.length}件 / 最終同期 ${savedAt}`;
+    const householdName = window.KakeiboAuth?.getUser?.()?.household?.name || '選択中の家計簿';
+    status.textContent = `${householdName}：${appData.receipts.length}件 / 最終同期 ${savedAt}`;
 }
 
 function renderCurrentPage() {
@@ -161,7 +162,7 @@ async function loadSharedData({ announce = false, force = false } = {}) {
             lastSharedSyncAt = Date.now();
             updateStorageStatus();
             renderCurrentPage();
-            if (announce) showToast(`${appData.receipts.length}件の共有Dataを同期しました`, '☁️');
+            if (announce) showToast(`${appData.receipts.length}件の家計簿Dataを同期しました`, '☁️');
             return true;
         } catch (error) {
             console.error('共有データの同期に失敗しました。', error);
@@ -185,7 +186,7 @@ function clearInMemoryData() {
     appData.receipts.splice(0, appData.receipts.length);
     lastSharedSyncAt = 0;
     renderCurrentPage();
-    updateStorageStatus('ログインすると家族共有データを読み込みます');
+    updateStorageStatus('ログインすると選択中の家計簿を読み込みます');
 }
 
 function downloadDataBackup() {
@@ -199,7 +200,7 @@ function downloadDataBackup() {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    showToast('共有Dataのバックアップを書き出しました', '✓');
+    showToast('家計簿Dataのバックアップを書き出しました', '✓');
 }
 
 function initDataSafety() {
@@ -345,7 +346,7 @@ function openItemEditor(item) {
                 <label for="detail-item-category">カテゴリ</label>
                 <select class="form-input" id="detail-item-category" name="category">${categoryOptions}</select>
             </div>
-            <div class="form-actions"><button class="btn btn-primary" type="submit">共有Dataへ保存</button></div>
+            <div class="form-actions"><button class="btn btn-primary" type="submit">家計簿Dataへ保存</button></div>
         </form>
     `, body => {
         body.querySelector('#item-edit-form')?.addEventListener('submit', async event => {
@@ -368,13 +369,13 @@ function openItemEditor(item) {
                 });
                 await loadSharedData({ force: true });
                 closeDetailModal();
-                showToast(`${name}の商品情報を家族共有Dataへ更新しました`);
+                showToast(`${name}の商品情報を選択中の家計簿へ更新しました`);
                 navigateTo('items');
             } catch (error) {
                 console.error('商品マスタ更新に失敗しました。', error);
                 showToast(error instanceof Error ? error.message : '商品マスタを更新できませんでした', '⚠️');
                 submitButton.disabled = false;
-                submitButton.textContent = '共有Dataへ保存';
+                submitButton.textContent = '家計簿Dataへ保存';
             }
         });
     });
@@ -1015,6 +1016,7 @@ function initSettingsPage() {
             document.getElementById('accuracy-value').textContent = e.target.value;
         });
     }
+    window.KakeiboAccess?.load();
 }
 
 // ===== 月セレクター =====
@@ -1084,7 +1086,7 @@ function initUploadModal() {
         }
 
         const removed = appData.receipts[index];
-        if (!window.confirm(`${removed.store || 'レシート'}の共有レシートを削除します。この操作は家族全員の画面に反映されます。`)) return;
+        if (!window.confirm(`${removed.store || 'レシート'}のレシートを削除します。この操作は同じ家計簿の全メンバーへ反映されます。`)) return;
 
         cancelBtn.disabled = true;
         try {
@@ -1093,7 +1095,7 @@ function initUploadModal() {
             lastSharedSyncAt = Date.now();
             closeModal();
             updateStorageStatus();
-            showToast(`${removed.store || 'レシート'}のレシートを共有Dataから破棄しました`, '✓');
+            showToast(`${removed.store || 'レシート'}のレシートを家計簿Dataから破棄しました`, '✓');
             navigateTo('receipts');
         } catch (error) {
             console.error('共有レシートの削除に失敗しました。', error);
@@ -1445,7 +1447,7 @@ function initUploadModal() {
         if (lastInput) lastInput.focus();
     });
 
-    // 承認して家族共有Dataへ登録
+    // 承認して選択中の家計簿へ登録
     approveBtn.addEventListener('click', async () => {
         const store = document.getElementById('review-store').value.trim();
         const date = document.getElementById('review-date').value;
@@ -1493,7 +1495,7 @@ function initUploadModal() {
                 editingReceiptId = null;
                 closeModal();
                 updateStorageStatus();
-                showToast(`${store}のレシートを家族共有Dataへ更新しました`);
+                showToast(`${store}のレシートを選択中の家計簿へ更新しました`);
                 navigateTo('receipts');
                 return;
             }
@@ -1518,7 +1520,7 @@ function initUploadModal() {
 
             const totalRegistered = registeredReceiptCount;
             closeModal();
-            showToast(`${totalRegistered}件のレシートを家族共有Dataへ登録しました`);
+            showToast(`${totalRegistered}件のレシートを選択中の家計簿へ登録しました`);
             navigateTo(currentPage);
         } catch (error) {
             console.error('共有レシートの保存に失敗しました。', error);

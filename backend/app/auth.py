@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import settings
 
@@ -21,14 +21,12 @@ class AuthenticatedUser(BaseModel):
     email: str
     name: str = ""
     picture: str = ""
-
-
-def _allowed_emails() -> set[str]:
-    return {
-        email.strip().lower()
-        for email in settings.ALLOWED_USER_EMAILS.split(",")
-        if email.strip()
-    }
+    status: str = ""
+    is_admin: bool = False
+    household_id: str = ""
+    household_name: str = ""
+    household_role: str = ""
+    households: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 def _verify_google_id_token(token: str) -> dict:
@@ -41,19 +39,18 @@ def _verify_google_id_token(token: str) -> dict:
 
 async def require_authorized_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    x_household_id: str = Header(default="", alias="X-Household-ID"),
 ) -> AuthenticatedUser:
-    """Google IDトークンを検証し、家族の許可メールだけを通します。"""
+    """Google IDトークン、利用状態、選択中の家計簿メンバー権限を検証します。"""
+    from app.services.tenant_service import TenantStorageError, authorize_identity
+
     if not settings.AUTH_REQUIRED:
-        return AuthenticatedUser(subject="local-dev", email="local-dev@localhost", name="Local user")
+        identity = AuthenticatedUser(subject="local-dev", email="local-dev@localhost", name="Local user")
+        return authorize_identity(identity, x_household_id)
 
     if not settings.GOOGLE_OAUTH_CLIENT_ID:
         logger.error("AUTH_REQUIRED is enabled but GOOGLE_OAUTH_CLIENT_ID is empty")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="認証設定が完了していません。")
-
-    allowed_emails = _allowed_emails()
-    if not allowed_emails:
-        logger.error("AUTH_REQUIRED is enabled but ALLOWED_USER_EMAILS is empty")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="利用者設定が完了していません。")
+        raise HTTPException(status_code=503, detail="認証設定が完了していません。")
 
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
@@ -73,19 +70,23 @@ async def require_authorized_user(
         ) from exc
     except Exception as exc:
         logger.warning("Google ID token verification failed: %s", exc)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google認証を確認できませんでした。") from exc
+        raise HTTPException(status_code=503, detail="Google認証を確認できませんでした。") from exc
 
     email = str(token_info.get("email") or "").strip().lower()
     email_verified = token_info.get("email_verified") is True or str(token_info.get("email_verified")).lower() == "true"
-    if not email or not email_verified:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="確認済みのGoogleメールアドレスが必要です。")
-    if email not in allowed_emails:
-        logger.warning("Rejected a Google account outside the allowlist")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="このGoogleアカウントには利用権限がありません。")
+    subject = str(token_info.get("sub") or "").strip()
+    if not subject or not email or not email_verified:
+        raise HTTPException(status_code=403, detail="確認済みのGoogleアカウントが必要です。")
 
-    return AuthenticatedUser(
-        subject=str(token_info.get("sub") or ""),
+    identity = AuthenticatedUser(
+        subject=subject,
         email=email,
         name=str(token_info.get("name") or email),
         picture=str(token_info.get("picture") or ""),
     )
+    try:
+        return await asyncio.to_thread(authorize_identity, identity, x_household_id)
+    except HTTPException:
+        raise
+    except TenantStorageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
