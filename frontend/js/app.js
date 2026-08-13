@@ -7,7 +7,7 @@ const appData = {
     categories: [
         { name: '食費', color: '#D1AD67' },
         { name: '日用品', color: '#68D9C1' },
-        { name: '衛生用品', color: '#F2C674' },
+        { name: '衛生用品', color: '#A78BFA' },
         { name: '交際費', color: '#F28B92' },
         { name: 'その他', color: '#8893A5' }
     ]
