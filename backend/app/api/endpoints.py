@@ -395,7 +395,7 @@ async def update_admin_payment_qr(
 ):
     require_platform_admin(user)
     if not (file.content_type or "").startswith("image/"):
-        raise HTTPException(status_code=400, detail="PayPay加盟店QRの画像ファイルを指定してください。")
+        raise HTTPException(status_code=400, detail="PayPay QRの画像ファイルを指定してください。")
     try:
         image_bytes = await file.read()
         payment = await asyncio.to_thread(upload_payment_qr, image_bytes)

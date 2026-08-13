@@ -319,13 +319,13 @@
                 </div>
                 <div class="billing-hero">
                     <div>
-                        <p class="billing-hero-label">お支払い予定額</p>
+                        <p class="billing-hero-label">任意精算の目安</p>
                         <p class="billing-hero-value" id="billing-payment-amount">¥0</p>
-                        <p class="billing-hero-note">概算原価 ＋ 管理手数料100%（合計は1円単位へ切り上げ）</p>
+                        <p class="billing-hero-note">概算原価 ＋ 運営協力分100%（支払いは任意・合計は1円単位へ切り上げ）</p>
                     </div>
                     <div class="billing-cost-pair">
                         <span>概算原価<strong id="billing-base-cost">¥0</strong></span>
-                        <span>管理手数料<strong id="billing-service-fee">¥0</strong></span>
+                        <span>運営協力分<strong id="billing-service-fee">¥0</strong></span>
                     </div>
                 </div>
                 <div class="billing-limit-panel">
@@ -346,10 +346,10 @@
                 <div class="paypay-panel" id="paypay-panel">
                     <div class="paypay-copy">
                         <span class="paypay-mark">P</span>
-                        <div><strong>PayPay加盟店QRで手動精算</strong><p id="paypay-recipient">支払先を確認中...</p></div>
+                        <div><strong>PayPayで友人間の任意精算</strong><p id="paypay-recipient">支払先を確認中...</p></div>
                     </div>
                     <img id="paypay-qr-image" class="paypay-qr-image" alt="PayPay支払いQRコード" hidden>
-                    <p class="settings-help" id="paypay-qr-empty">加盟店QRは管理者が登録後に表示されます。</p>
+                    <p class="settings-help" id="paypay-qr-empty">QRコードは管理者が登録後に表示されます。</p>
                 </div>
                 <p class="billing-estimate-note" id="billing-estimate-note"></p>
             </div>
@@ -406,12 +406,12 @@
                 </div>
                 <div class="admin-billing-total">
                     <span>全家計簿の概算原価<strong id="admin-billing-base-total">¥0</strong></span>
-                    <span>回収予定額<strong id="admin-billing-payment-total">¥0</strong></span>
+                    <span>任意精算目安<strong id="admin-billing-payment-total">¥0</strong></span>
                 </div>
                 <form class="billing-qr-upload" id="billing-qr-upload-form">
                     <div>
-                        <strong>PayPay加盟店QRコード</strong>
-                        <p class="settings-help">画像は非公開Cloud Storageへ保存されます。個人用の「送る・受け取る」マイコードは登録しないでください。</p>
+                        <strong>PayPay QRコード（個人用可）</strong>
+                        <p class="settings-help">非公開Cloud Storageへ保存され、家計簿オーナーだけに表示されます。友人同士で合意した任意精算に使用してください。</p>
                     </div>
                     <label class="btn btn-secondary" for="billing-qr-file">QR画像を選択</label>
                     <input id="billing-qr-file" type="file" accept="image/*" hidden>

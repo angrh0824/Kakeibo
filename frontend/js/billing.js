@@ -57,12 +57,12 @@
         image.removeAttribute('src');
         empty.hidden = false;
         if (!configured) {
-            empty.textContent = '加盟店QRは管理者が登録後に表示されます。';
+            empty.textContent = 'QRコードは管理者が登録後に表示されます。';
             return;
         }
         try {
             const response = await window.KakeiboShared.request('/billing/payment-qr');
-            if (!response.ok) throw new Error('加盟店QRを読み込めませんでした。');
+            if (!response.ok) throw new Error('QRコードを読み込めませんでした。');
             payPayQrObjectUrl = URL.createObjectURL(await response.blob());
             image.src = payPayQrObjectUrl;
             image.hidden = false;
@@ -229,7 +229,7 @@
             const input = document.getElementById('billing-qr-file');
             const file = input?.files?.[0];
             if (!file) {
-                notify('PayPay加盟店QR画像を選択してください。', '⚠️');
+                notify('PayPay QR画像を選択してください。', '⚠️');
                 return;
             }
             const button = event.currentTarget.querySelector('button[type="submit"]');
@@ -240,9 +240,9 @@
                 await window.KakeiboShared.requestJson('/admin/billing/payment-qr', { method: 'POST', body: form });
                 input.value = '';
                 await loadOwner();
-                notify('PayPay加盟店QRを非公開保存しました');
+                notify('PayPay QRコードを非公開保存しました');
             } catch (error) {
-                notify(error instanceof Error ? error.message : '加盟店QRを保存できませんでした。', '⚠️');
+                notify(error instanceof Error ? error.message : 'QRコードを保存できませんでした。', '⚠️');
             } finally {
                 button.disabled = false;
             }

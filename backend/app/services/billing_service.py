@@ -459,13 +459,13 @@ def upload_payment_qr(image_bytes: bytes) -> Dict[str, Any]:
     except BillingStorageError:
         raise
     except Exception as exc:
-        raise BillingStorageError("PayPay加盟店QR画像を保存できませんでした。") from exc
+        raise BillingStorageError("PayPay QR画像を保存できませんでした。") from exc
     return _payment_config()
 
 
 def download_payment_qr() -> tuple[bytes, str]:
     if not settings.BILLING_ENABLED or not settings.GCS_BUCKET_NAME:
-        raise BillingStorageError("PayPay加盟店QR画像はまだ登録されていません。")
+        raise BillingStorageError("PayPay QR画像はまだ登録されていません。")
     config = _firestore_client().collection(SYSTEM).document(BILLING_CONFIG).get().to_dict() or {}
     object_name = str(config.get("paypay_qr_object_name") or "")
     if not object_name.startswith("billing/payment/"):
@@ -475,4 +475,4 @@ def download_payment_qr() -> tuple[bytes, str]:
         content = storage.Client().bucket(settings.GCS_BUCKET_NAME).blob(object_name).download_as_bytes()
         return content, "image/png"
     except Exception as exc:
-        raise BillingStorageError("PayPay加盟店QR画像を読み込めませんでした。") from exc
+        raise BillingStorageError("PayPay QR画像を読み込めませんでした。") from exc
