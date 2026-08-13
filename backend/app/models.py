@@ -20,8 +20,20 @@ class HouseholdInviteCreate(BaseModel):
         return normalized
 
 
-class HouseholdBillingLimitUpdate(BaseModel):
-    monthly_limit_jpy: int = Field(ge=0, le=1_000_000)
+class HouseholdBillingAdminUpdate(BaseModel):
+    usage_limit_jpy: Optional[int] = Field(default=None, ge=0, le=1_000_000)
+    outstanding_balance_jpy: Optional[int] = Field(default=None, ge=0, le=1_000_000)
+    monthly_limit_jpy: Optional[int] = Field(default=None, ge=0, le=1_000_000)
+    note: str = Field(default="", max_length=200)
+
+    @model_validator(mode="after")
+    def require_update(self) -> "HouseholdBillingAdminUpdate":
+        if self.usage_limit_jpy is None and self.monthly_limit_jpy is not None:
+            self.usage_limit_jpy = self.monthly_limit_jpy
+        if self.usage_limit_jpy is None and self.outstanding_balance_jpy is None:
+            raise ValueError("利用上限または未精算残高を指定してください。")
+        self.note = self.note.strip()
+        return self
 
 
 class ReceiptItemWrite(BaseModel):

@@ -1,4 +1,4 @@
-"""Household-scoped usage metering and conservative monthly cost estimates."""
+"""Household-scoped monthly usage, cumulative balances, and conservative cost estimates."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ HOUSEHOLDS = "households"
 USAGE_PERIODS = "usage_periods"
 USAGE_EVENTS = "usage_events"
 BILLING_STATE = "billing_state"
+BILLING_ADJUSTMENTS = "billing_adjustments"
 CURRENT_STATE = "current"
 SYSTEM = "system"
 BILLING_CONFIG = "billing-config"
@@ -35,10 +36,10 @@ class BillingStorageError(RuntimeError):
 
 
 class MonthlyLimitExceeded(RuntimeError):
-    """Raised before AI work when a household has reached its hard limit."""
+    """Raised before AI work when the cumulative outstanding balance reaches its limit."""
 
     def __init__(self, limit_jpy: int, payment_jpy: int):
-        super().__init__("今月の利用上限に達したため、新しいレシート解析を停止しています。")
+        super().__init__("累積未精算残高が利用上限に達したため、新しいレシート解析を停止しています。")
         self.limit_jpy = limit_jpy
         self.payment_jpy = payment_jpy
 
@@ -162,9 +163,7 @@ def _payment_config(client: Optional[firestore.Client] = None) -> Dict[str, Any]
 
 
 def calculate_costs(
-    stats: Dict[str, Any],
-    state: Dict[str, Any],
-    monthly_limit_jpy: int,
+    stats: Dict[str, Any], state: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Calculate a catalog-rate estimate before shared Google Cloud free tiers."""
     seconds = math.ceil(max(0.0, _as_number(stats.get("cloud_run_ms"))) / 100.0) / 10.0
@@ -205,10 +204,6 @@ def calculate_costs(
     markup_percent = max(0, settings.BILLING_MARKUP_PERCENT)
     service_fee_jpy = round(estimated_cost_jpy * markup_percent / 100, 2)
     payment_amount_jpy = math.ceil(estimated_cost_jpy + service_fee_jpy)
-    limit = max(0, int(monthly_limit_jpy))
-    used_percent = round(payment_amount_jpy / limit * 100, 1) if limit else 0.0
-    blocked = bool(limit and payment_amount_jpy >= limit)
-    warning = bool(limit and not blocked and used_percent >= 80)
     return {
         "usd_jpy_rate": exchange_rate,
         "markup_percent": markup_percent,
@@ -216,12 +211,85 @@ def calculate_costs(
         "estimated_cost_jpy": estimated_cost_jpy,
         "service_fee_jpy": service_fee_jpy,
         "payment_amount_jpy": payment_amount_jpy,
-        "monthly_limit_jpy": limit,
-        "remaining_jpy": max(0, limit - payment_amount_jpy) if limit else None,
+    }
+
+
+def calculate_balance(
+    total_charges_jpy: int,
+    adjustment_jpy: int,
+    usage_limit_jpy: int,
+) -> Dict[str, Any]:
+    """Apply administrator settlements/waivers to lifetime charges."""
+    total_charges = max(0, int(total_charges_jpy))
+    adjustment = int(adjustment_jpy)
+    outstanding = max(0, total_charges + adjustment)
+    limit = max(0, int(usage_limit_jpy))
+    used_percent = round(outstanding / limit * 100, 1) if limit else 0.0
+    blocked = bool(limit and outstanding >= limit)
+    warning = bool(limit and not blocked and used_percent >= 80)
+    return {
+        "total_charges_jpy": total_charges,
+        "adjustment_jpy": adjustment,
+        "outstanding_balance_jpy": outstanding,
+        "usage_limit_jpy": limit,
+        "remaining_jpy": max(0, limit - outstanding) if limit else None,
         "used_percent": used_percent,
         "status": "blocked" if blocked else "warning" if warning else "ok",
         "can_analyze": not blocked,
     }
+
+
+def _period_cost_map(
+    client: firestore.Client,
+    household_id: str,
+    state: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """Calculate each tracked month with an end-of-month storage approximation."""
+    snapshots = list(
+        client.collection(HOUSEHOLDS)
+        .document(household_id)
+        .collection(USAGE_PERIODS)
+        .stream()
+    )
+    entries = sorted(
+        ((snapshot.id, snapshot.to_dict() or {}) for snapshot in snapshots),
+        key=lambda item: item[0],
+    )
+    net_delta = sum(
+        max(0, _as_int(stats.get("storage_bytes_added")))
+        - max(0, _as_int(stats.get("storage_bytes_deleted")))
+        for _, stats in entries
+    )
+    current_bytes = max(0, _as_int(state.get("storage_bytes_current")))
+    running_bytes = max(0, current_bytes - net_delta)
+    costs_by_period: Dict[str, Dict[str, Any]] = {}
+    for period, stats in entries:
+        running_bytes = max(
+            0,
+            running_bytes
+            + max(0, _as_int(stats.get("storage_bytes_added")))
+            - max(0, _as_int(stats.get("storage_bytes_deleted"))),
+        )
+        costs_by_period[period] = calculate_costs(
+            stats,
+            {"storage_bytes_current": running_bytes},
+        )
+
+    active_period = current_period()
+    if active_period not in costs_by_period:
+        costs_by_period[active_period] = calculate_costs(
+            {},
+            {"storage_bytes_current": current_bytes},
+        )
+    return costs_by_period
+
+
+def _usage_limit(household: Dict[str, Any]) -> int:
+    legacy_limit = household.get(
+        "billing_monthly_limit_jpy",
+        settings.BILLING_DEFAULT_MONTHLY_LIMIT_JPY,
+    )
+    return max(0, _as_int(household.get("billing_usage_limit_jpy"), _as_int(legacy_limit)))
 
 
 def get_household_summary(household_id: str, period: str = "") -> Dict[str, Any]:
@@ -230,7 +298,8 @@ def get_household_summary(household_id: str, period: str = "") -> Dict[str, Any]
         household = {"name": "家計簿", "owner_email": ""}
         stats: Dict[str, Any] = {}
         state: Dict[str, Any] = {}
-        limit = settings.BILLING_DEFAULT_MONTHLY_LIMIT_JPY
+        costs = calculate_costs(stats, state)
+        balance = calculate_balance(0, 0, settings.BILLING_DEFAULT_MONTHLY_LIMIT_JPY)
         payment = _payment_config()
     else:
         client = _firestore_client()
@@ -240,13 +309,30 @@ def get_household_summary(household_id: str, period: str = "") -> Dict[str, Any]
         household = household_snapshot.to_dict() or {}
         stats = _period_ref(client, household_id, period).get().to_dict() or {}
         state, _ = _load_or_initialize_storage_state(client, household_id)
-        limit = max(0, _as_int(
-            household.get("billing_monthly_limit_jpy"),
-            settings.BILLING_DEFAULT_MONTHLY_LIMIT_JPY,
-        ))
+        costs_by_period = _period_cost_map(client, household_id, state)
+        costs = costs_by_period.get(period) or calculate_costs(
+            stats,
+            {"storage_bytes_current": 0},
+        )
+        total_charges = sum(
+            max(0, _as_int(period_cost.get("payment_amount_jpy")))
+            for period_cost in costs_by_period.values()
+        )
+        balance = calculate_balance(
+            total_charges,
+            _as_int(state.get("balance_adjustment_jpy")),
+            _usage_limit(household),
+        )
+        balance["updated_at"] = _json_value(state.get("balance_updated_at"))
+        balance["updated_by"] = _json_value(state.get("balance_updated_by") or {})
         payment = _payment_config(client)
 
-    costs = calculate_costs(stats, state, limit)
+    # Keep legacy fields temporarily so an old cached frontend fails safely.
+    costs["monthly_limit_jpy"] = balance["usage_limit_jpy"]
+    costs["remaining_jpy"] = balance["remaining_jpy"]
+    costs["used_percent"] = balance["used_percent"]
+    costs["status"] = balance["status"]
+    costs["can_analyze"] = balance["can_analyze"]
     return {
         "period": period,
         "household": {
@@ -267,8 +353,9 @@ def get_household_summary(household_id: str, period: str = "") -> Dict[str, Any]
             "storage_bytes_current": max(0, _as_int(state.get("storage_bytes_current"))),
         },
         "costs": costs,
+        "balance": balance,
         "payment": payment,
-        "estimate_note": "OpenRouter実費と東京リージョン公開単価による無料枠適用前の概算です。",
+        "estimate_note": "選択月の利用額と、月をまたいで繰り越す未精算残高です。OpenRouter実費と東京リージョン公開単価による無料枠適用前の概算です。",
         "metering_started": _json_value(state.get("metering_started_at")),
     }
 
@@ -277,12 +364,12 @@ def assert_analysis_allowed(household_id: str, requested_images: int = 1) -> Non
     if not settings.BILLING_ENABLED:
         return
     summary = get_household_summary(household_id)
-    costs = summary["costs"]
-    limit = int(costs["monthly_limit_jpy"] or 0)
+    balance = summary["balance"]
+    limit = int(balance["usage_limit_jpy"] or 0)
     reserve = max(0, settings.BILLING_ANALYSIS_RESERVE_JPY) * max(1, int(requested_images))
-    projected = int(costs["payment_amount_jpy"] or 0) + reserve
+    projected = int(balance["outstanding_balance_jpy"] or 0) + reserve
     if limit and projected > limit:
-        raise MonthlyLimitExceeded(limit, int(costs["payment_amount_jpy"] or 0))
+        raise MonthlyLimitExceeded(limit, int(balance["outstanding_balance_jpy"] or 0))
 
 
 def record_ai_usage(
@@ -398,16 +485,63 @@ def record_cloud_activity(
         raise BillingStorageError("Cloud利用量を記録できませんでした。") from exc
 
 
-def set_household_limit(household_id: str, monthly_limit_jpy: int) -> Dict[str, Any]:
+def update_household_billing(
+    household_id: str,
+    *,
+    usage_limit_jpy: Optional[int] = None,
+    outstanding_balance_jpy: Optional[int] = None,
+    note: str = "",
+    admin: Any = None,
+) -> Dict[str, Any]:
+    """Update cumulative limit and/or set current outstanding balance."""
+    if usage_limit_jpy is None and outstanding_balance_jpy is None:
+        raise ValueError("利用上限または未精算残高を指定してください。")
     if not settings.BILLING_ENABLED:
         return get_household_summary(household_id)
-    ref = _firestore_client().collection(HOUSEHOLDS).document(household_id)
-    if not ref.get().exists:
+    client = _firestore_client()
+    household_ref = client.collection(HOUSEHOLDS).document(household_id)
+    if not household_ref.get().exists:
         raise BillingStorageError("家計簿が見つかりません。")
-    ref.set({
-        "billing_monthly_limit_jpy": max(0, int(monthly_limit_jpy)),
-        "billing_updated_at": firestore.SERVER_TIMESTAMP,
-    }, merge=True)
+    before = get_household_summary(household_id)
+    previous_balance = before["balance"]
+    state_ref = _state_ref(client, household_id)
+    actor = {
+        "subject": str(getattr(admin, "subject", "") or ""),
+        "email": str(getattr(admin, "email", "") or ""),
+    }
+    batch = client.batch()
+
+    if usage_limit_jpy is not None:
+        batch.set(household_ref, {
+            "billing_usage_limit_jpy": max(0, int(usage_limit_jpy)),
+            "billing_updated_at": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+
+    if outstanding_balance_jpy is not None:
+        desired = max(0, int(outstanding_balance_jpy))
+        adjustment = desired - int(previous_balance["total_charges_jpy"])
+        batch.set(state_ref, {
+            "balance_adjustment_jpy": adjustment,
+            "balance_updated_at": firestore.SERVER_TIMESTAMP,
+            "balance_updated_by": actor,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+        adjustment_ref = (
+            household_ref.collection(BILLING_ADJUSTMENTS).document(uuid.uuid4().hex)
+        )
+        batch.set(adjustment_ref, {
+            "previous_outstanding_balance_jpy": int(previous_balance["outstanding_balance_jpy"]),
+            "new_outstanding_balance_jpy": desired,
+            "total_charges_jpy_at_update": int(previous_balance["total_charges_jpy"]),
+            "balance_adjustment_jpy": adjustment,
+            "note": str(note or "").strip()[:200],
+            "updated_by": actor,
+            "created_at": firestore.SERVER_TIMESTAMP,
+        })
+    try:
+        batch.commit()
+    except Exception as exc:
+        raise BillingStorageError("料金設定を更新できませんでした。") from exc
     return get_household_summary(household_id)
 
 
@@ -418,12 +552,15 @@ def list_household_summaries(period: str = "") -> Dict[str, Any]:
     summaries = []
     for snapshot in _firestore_client().collection(HOUSEHOLDS).stream():
         summaries.append(get_household_summary(snapshot.id, period))
-    summaries.sort(key=lambda item: item["costs"]["payment_amount_jpy"], reverse=True)
+    summaries.sort(key=lambda item: item["balance"]["outstanding_balance_jpy"], reverse=True)
     return {
         "period": period,
         "households": summaries,
         "total_estimated_cost_jpy": round(sum(item["costs"]["estimated_cost_jpy"] for item in summaries), 2),
         "total_payment_amount_jpy": sum(item["costs"]["payment_amount_jpy"] for item in summaries),
+        "total_outstanding_balance_jpy": sum(
+            item["balance"]["outstanding_balance_jpy"] for item in summaries
+        ),
     }
 
 

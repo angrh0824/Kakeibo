@@ -9,6 +9,7 @@ from app.main import app
 from app.services.billing_service import (
     MonthlyLimitExceeded,
     assert_analysis_allowed,
+    calculate_balance,
     calculate_costs,
     normalize_period,
 )
@@ -20,7 +21,7 @@ class BillingCalculationTests(unittest.TestCase):
             patch.object(settings, "BILLING_MARKUP_PERCENT", 100),
             patch.object(settings, "BILLING_USD_JPY_RATE", 150.0),
         ):
-            costs = calculate_costs({"ai_cost_usd": 0.01}, {}, 1000)
+            costs = calculate_costs({"ai_cost_usd": 0.01}, {})
         self.assertEqual(costs["estimated_cost_jpy"], 1.5)
         self.assertEqual(costs["payment_amount_jpy"], 3)
         self.assertEqual(costs["service_fee_jpy"], 1.5)
@@ -30,25 +31,27 @@ class BillingCalculationTests(unittest.TestCase):
             patch.object(settings, "BILLING_MARKUP_PERCENT", 100),
             patch.object(settings, "BILLING_USD_JPY_RATE", 150.0),
         ):
-            costs = calculate_costs({"ai_cost_usd": 0.007333}, {}, 1000)
+            costs = calculate_costs({"ai_cost_usd": 0.007333}, {})
         self.assertEqual(costs["estimated_cost_jpy"], 1.1)
         self.assertEqual(costs["service_fee_jpy"], 1.1)
         self.assertEqual(costs["payment_amount_jpy"], 3)
 
-    def test_hard_limit_blocks_new_analysis(self):
-        with (
-            patch.object(settings, "BILLING_MARKUP_PERCENT", 100),
-            patch.object(settings, "BILLING_USD_JPY_RATE", 150.0),
-        ):
-            costs = calculate_costs({"ai_cost_usd": 0.01}, {}, 3)
-        self.assertEqual(costs["status"], "blocked")
-        self.assertFalse(costs["can_analyze"])
+    def test_cumulative_balance_reaches_usage_limit(self):
+        balance = calculate_balance(1200, -200, 1000)
+        self.assertEqual(balance["outstanding_balance_jpy"], 1000)
+        self.assertEqual(balance["status"], "blocked")
+        self.assertFalse(balance["can_analyze"])
+
+    def test_zeroing_balance_keeps_history_and_future_cost_accumulates(self):
+        settled = calculate_balance(500, -500, 1000)
+        later = calculate_balance(530, -500, 1000)
+        self.assertEqual(settled["total_charges_jpy"], 500)
+        self.assertEqual(settled["outstanding_balance_jpy"], 0)
+        self.assertEqual(later["outstanding_balance_jpy"], 30)
 
     @patch("app.services.billing_service.get_household_summary")
     def test_batch_preflight_reserves_each_image(self, get_summary):
-        get_summary.return_value = {
-            "costs": {"monthly_limit_jpy": 100, "payment_amount_jpy": 85}
-        }
+        get_summary.return_value = {"balance": {"usage_limit_jpy": 100, "outstanding_balance_jpy": 85}}
         with (
             patch.object(settings, "BILLING_ENABLED", True),
             patch.object(settings, "BILLING_ANALYSIS_RESERVE_JPY", 10),
@@ -93,6 +96,33 @@ class BillingApiTests(unittest.TestCase):
         response = self.client.get("/api/billing/summary?period=2026-08")
         self.assertEqual(response.status_code, 403)
 
+
+    @patch("app.api.endpoints.update_household_billing")
+    def test_admin_can_zero_another_household_balance(self, update_billing):
+        app.dependency_overrides[require_authorized_user] = lambda: AuthenticatedUser(
+            subject="admin",
+            email="admin@example.com",
+            is_admin=True,
+            household_id="admin-home",
+            household_name="管理者家計簿",
+            household_role="owner",
+        )
+        update_billing.return_value = {
+            "period": "2026-08",
+            "household": {"id": "friend-home"},
+            "usage": {},
+            "costs": {"payment_amount_jpy": 20},
+            "balance": {"outstanding_balance_jpy": 0, "usage_limit_jpy": 1000},
+            "payment": {},
+        }
+        response = self.client.patch(
+            "/api/admin/billing/households/friend-home",
+            json={"usage_limit_jpy": 1000, "outstanding_balance_jpy": 0, "note": "支払確認"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["balance"]["outstanding_balance_jpy"], 0)
+        self.assertEqual(update_billing.call_args.args[0], "friend-home")
+        self.assertEqual(update_billing.call_args.kwargs["outstanding_balance_jpy"], 0)
 
 if __name__ == "__main__":
     unittest.main()

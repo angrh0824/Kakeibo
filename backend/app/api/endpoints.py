@@ -8,7 +8,7 @@ from fastapi.responses import Response
 
 from app.auth import AuthenticatedUser, require_authorized_user
 from app.config import settings
-from app.models import HouseholdBillingLimitUpdate, HouseholdInviteCreate, ItemMasterUpdate, ReceiptWrite
+from app.models import HouseholdBillingAdminUpdate, HouseholdInviteCreate, ItemMasterUpdate, ReceiptWrite
 from app.services.ai_service import ReceiptAnalysisError, analyze_receipt_image
 from app.services.billing_service import (
     BillingStorageError,
@@ -19,7 +19,7 @@ from app.services.billing_service import (
     list_household_summaries,
     record_ai_usage,
     record_cloud_activity,
-    set_household_limit,
+    update_household_billing,
     upload_payment_qr,
 )
 from app.services.image_storage import (
@@ -375,15 +375,24 @@ async def get_admin_billing_households(
 
 
 @router.patch("/admin/billing/households/{household_id}")
-async def update_admin_household_limit(
+async def update_admin_household_billing(
     household_id: str,
-    payload: HouseholdBillingLimitUpdate,
+    payload: HouseholdBillingAdminUpdate,
     user: AuthenticatedUser = Depends(require_authorized_user),
 ):
     require_platform_admin(user)
     try:
-        summary = await asyncio.to_thread(set_household_limit, household_id, payload.monthly_limit_jpy)
+        summary = await asyncio.to_thread(
+            update_household_billing,
+            household_id,
+            usage_limit_jpy=payload.usage_limit_jpy,
+            outstanding_balance_jpy=payload.outstanding_balance_jpy,
+            note=payload.note,
+            admin=user,
+        )
         return {"success": True, **summary}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except BillingStorageError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

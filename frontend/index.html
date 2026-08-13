@@ -9,8 +9,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Serif+JP:wght@400;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=20260813-review2">
-    <link rel="stylesheet" href="css/billing.css">
+    <link rel="stylesheet" href="css/style.css?v=20260813-balance1">
+    <link rel="stylesheet" href="css/billing.css?v=20260813-balance1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <script src="js/config.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -279,47 +279,23 @@
 
         <!-- ===== Settings Page ===== -->
         <section id="page-settings" class="page">
-            <div class="settings-grid">
+            <div class="settings-grid settings-grid-single">
                 <div class="card glass">
                     <div class="card-header"><h3>カテゴリ設定</h3></div>
                     <div class="settings-list" id="category-settings"></div>
-                </div>
-                <div class="card glass">
-                    <div class="card-header"><h3>AI解析設定</h3></div>
-                    <div class="settings-form">
-                        <div class="form-group">
-                            <label>モデル</label>
-                            <select class="form-input select-input"><option>google/gemini-2.5-flash-lite</option></select>
-                        </div>
-                        <div class="form-group">
-                            <label>OCRエンジン</label>
-                            <select class="form-input select-input">
-                                <option>Google Vision API</option>
-                                <option>Tesseract 5</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>名寄せ精度</label>
-                            <div class="slider-container">
-                                <input type="range" min="0.7" max="0.95" step="0.01" value="0.85" class="slider" id="accuracy-slider">
-                                <span class="slider-value" id="accuracy-value">0.85</span>
-                            </div>
-                        </div>
-                        <button class="btn btn-primary">設定を保存</button>
-                    </div>
                 </div>
             </div>
             <div class="card glass household-billing-card" id="household-billing-card" hidden>
                 <div class="card-header billing-card-header">
                     <div>
                         <p class="settings-eyebrow">MONTHLY USAGE</p>
-                        <h3>今月の利用料金</h3>
+                        <h3>利用料金と未精算残高</h3>
                     </div>
                     <input class="form-input billing-month-input" id="billing-period" type="month" aria-label="利用料金の対象月">
                 </div>
                 <div class="billing-hero">
                     <div>
-                        <p class="billing-hero-label">任意精算の目安</p>
+                        <p class="billing-hero-label">選択月の任意精算目安</p>
                         <p class="billing-hero-value" id="billing-payment-amount">¥0</p>
                         <p class="billing-hero-note">概算原価 ＋ 運営協力分100%（支払いは任意・合計は1円単位へ切り上げ）</p>
                     </div>
@@ -328,9 +304,19 @@
                         <span>運営協力分<strong id="billing-service-fee">¥0</strong></span>
                     </div>
                 </div>
+                <div class="billing-balance-summary">
+                    <div>
+                        <span>累積未精算残高</span>
+                        <strong id="billing-outstanding-balance">¥0</strong>
+                    </div>
+                    <div>
+                        <span>これまでの利用料金合計</span>
+                        <strong id="billing-total-charges">¥0</strong>
+                    </div>
+                </div>
                 <div class="billing-limit-panel">
                     <div class="billing-limit-copy">
-                        <span id="billing-limit-label">月額上限 ¥0</span>
+                        <span id="billing-limit-label">累積利用上限 ¥0</span>
                         <span id="billing-limit-remaining">残り ¥0</span>
                     </div>
                     <div class="billing-progress"><span id="billing-limit-progress"></span></div>
@@ -400,13 +386,14 @@
                 <div class="card-header billing-card-header">
                     <div>
                         <p class="settings-eyebrow">COST CONTROL</p>
-                        <h3>全家計簿の費用と上限</h3>
+                        <h3>全家計簿の料金・残高・利用上限</h3>
                     </div>
                     <input class="form-input billing-month-input" id="admin-billing-period" type="month" aria-label="管理料金の対象月">
                 </div>
                 <div class="admin-billing-total">
-                    <span>全家計簿の概算原価<strong id="admin-billing-base-total">¥0</strong></span>
-                    <span>任意精算目安<strong id="admin-billing-payment-total">¥0</strong></span>
+                    <span>選択月の概算原価<strong id="admin-billing-base-total">¥0</strong></span>
+                    <span>選択月の精算目安<strong id="admin-billing-payment-total">¥0</strong></span>
+                    <span>全家計簿の未精算残高<strong id="admin-billing-outstanding-total">¥0</strong></span>
                 </div>
                 <form class="billing-qr-upload" id="billing-qr-upload-form">
                     <div>
@@ -589,8 +576,8 @@
 
     <script src="js/auth.js?v=20260813-pixel1"></script>
     <script src="js/shared-data.js"></script>
-    <script src="js/app.js?v=20260813-review2"></script>
+    <script src="js/app.js?v=20260813-balance1"></script>
     <script src="js/access-management.js"></script>
-    <script src="js/billing.js"></script>
+    <script src="js/billing.js?v=20260813-balance1"></script>
 </body>
 </html>

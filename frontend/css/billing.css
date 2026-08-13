@@ -182,6 +182,94 @@
     .admin-limit-control { grid-column: 1 / -1; }
 }
 
+/* ===== Cumulative billing balance ===== */
+.settings-grid.settings-grid-single { grid-template-columns: minmax(0, 1fr); }
+
+.billing-balance-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 14px;
+}
+.billing-balance-summary div {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    padding: 17px 18px;
+    border: 1px solid rgba(111, 231, 216, .17);
+    border-radius: 16px;
+    background:
+        linear-gradient(135deg, rgba(111, 231, 216, .08), rgba(183, 156, 255, .05)),
+        rgba(255, 255, 255, .02);
+}
+.billing-balance-summary span {
+    color: var(--text-light);
+    font-size: 10px;
+    letter-spacing: .04em;
+}
+.billing-balance-summary strong {
+    overflow: hidden;
+    color: #b6fff2;
+    font-family: "Playfair Display", "Noto Serif JP", serif;
+    font-size: clamp(22px, 4vw, 34px);
+    line-height: 1.15;
+    text-overflow: ellipsis;
+}
+
+.admin-billing-total { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.admin-billing-item {
+    grid-template-columns: minmax(160px, 1fr) auto minmax(360px, 1.35fr);
+}
+.admin-billing-money > span { color: var(--text-light); font-size: 9px; }
+.admin-billing-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(110px, 1fr));
+    gap: 8px;
+    min-width: 0;
+}
+.admin-billing-field {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+}
+.admin-billing-field span {
+    color: var(--text-light);
+    font-size: 9px;
+    font-weight: 600;
+}
+.admin-billing-field .form-input {
+    width: 100%;
+    min-width: 0;
+    padding: 8px 9px;
+}
+.admin-billing-actions {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.admin-billing-actions .btn {
+    justify-content: center;
+    min-width: 0;
+    padding: 8px 10px;
+    font-size: 10px;
+}
+
+@media (max-width: 880px) {
+    .admin-billing-controls { grid-column: 1 / -1; }
+}
+
+@media (max-width: 600px) {
+    .billing-balance-summary { grid-template-columns: 1fr; }
+    .admin-billing-total { grid-template-columns: 1fr; }
+    .admin-billing-controls {
+        grid-column: auto;
+        grid-template-columns: 1fr;
+    }
+    .admin-billing-actions { grid-column: auto; }
+}
+
+
 @media (max-width: 600px) {
     .billing-card-header { align-items: flex-start; }
     .billing-month-input { width: 138px; padding-left: 10px; padding-right: 8px; }

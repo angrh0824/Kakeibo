@@ -1006,16 +1006,6 @@ function initSettingsPage() {
                 <div class="category-color" style="background:${cat.color}"></div>
             </div>
         `).join('');
-
-    const slider = document.getElementById('accuracy-slider');
-    const sliderValue = document.getElementById('accuracy-value');
-    if (slider && sliderValue) {
-        const newSlider = slider.cloneNode(true);
-        slider.parentNode.replaceChild(newSlider, slider);
-        document.getElementById('accuracy-slider').addEventListener('input', (e) => {
-            document.getElementById('accuracy-value').textContent = e.target.value;
-        });
-    }
     window.KakeiboAccess?.load();
 }
 
