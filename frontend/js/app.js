@@ -1036,7 +1036,14 @@ function initMonthSelector() {
 function initUploadModal() {
     const modal = document.getElementById('receipt-modal');
     const uploadZone = document.getElementById('upload-zone');
-    const fileInput = document.getElementById('file-input');
+    const cameraInput = document.getElementById('camera-input');
+    const galleryInput = document.getElementById('gallery-input');
+    const cameraButton = document.getElementById('btn-open-camera');
+    const galleryButton = document.getElementById('btn-select-gallery');
+    const clearFilesButton = document.getElementById('btn-clear-files');
+    const analyzeFilesButton = document.getElementById('btn-analyze-files');
+    const uploadSelection = document.getElementById('upload-selection');
+    const selectedFileList = document.getElementById('selected-file-list');
     const closeBtn = document.getElementById('close-modal');
     const cancelBtn = document.getElementById('btn-modal-cancel');
     const approveBtn = document.getElementById('btn-modal-approve');
@@ -1047,6 +1054,7 @@ function initUploadModal() {
     let reviewQueue = [];
     let currentReviewIndex = 0;
     let registeredReceiptCount = 0;
+    let selectedUploadFiles = [];
     reviewItems = [];
 
     // モーダルを開く
@@ -1131,20 +1139,111 @@ function initUploadModal() {
         if (modalBody) modalBody.scrollTop = 0;
     }
 
-    // ファイル選択
-    document.getElementById('btn-select-file').addEventListener('click', (e) => {
-        e.stopPropagation();
-        fileInput.click();
-    });
+    function selectedFileKey(file) {
+        return [file.name, file.size, file.lastModified, file.type].join(':');
+    }
 
-    uploadZone.addEventListener('click', () => {
-        fileInput.click();
-    });
+    function formatUploadFileSize(value) {
+        const size = Math.max(0, Number(value) || 0);
+        if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
+        return `${(size / 1024 / 1024).toFixed(1)} MB`;
+    }
 
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-            handleUpload(e.target.files);
+    function renderSelectedFiles() {
+        const count = selectedUploadFiles.length;
+        uploadSelection.hidden = count === 0;
+        document.getElementById('selected-file-count').textContent = `${count}枚を選択中`;
+        document.getElementById('selected-file-remaining').textContent = count >= 10
+            ? '10枚の上限に達しました'
+            : `あと${10 - count}枚追加できます`;
+        document.getElementById('camera-action-label').textContent = count ? '続けて撮影' : 'カメラで撮影';
+        document.getElementById('gallery-action-label').textContent = count ? '写真を追加' : '写真から選ぶ';
+        cameraButton.disabled = count >= 10;
+        galleryButton.disabled = count >= 10;
+        clearFilesButton.disabled = count === 0;
+        analyzeFilesButton.disabled = count === 0;
+        selectedFileList.innerHTML = selectedUploadFiles.map((entry, index) => {
+            const name = entry.file.name || `撮影画像 ${index + 1}`;
+            return `
+                <article class="selected-file-item" role="listitem">
+                    <img src="${escapeHtml(entry.previewUrl)}" alt="" class="selected-file-thumb">
+                    <div class="selected-file-copy">
+                        <strong>${escapeHtml(name)}</strong>
+                        <span>${formatUploadFileSize(entry.file.size)}</span>
+                    </div>
+                    <button type="button" class="selected-file-remove" data-remove-selected="${index}" aria-label="${escapeHtml(name)}を選択から外す">×</button>
+                </article>`;
+        }).join('');
+    }
+
+    function clearSelectedFiles() {
+        selectedUploadFiles.forEach(entry => URL.revokeObjectURL(entry.previewUrl));
+        selectedUploadFiles = [];
+        cameraInput.value = '';
+        galleryInput.value = '';
+        renderSelectedFiles();
+    }
+
+    function addSelectedFiles(files) {
+        const candidates = Array.from(files || []).filter(file => !file.type || file.type.startsWith('image/'));
+        if (candidates.length === 0) {
+            showToast('画像ファイルを選択してください', '⚠️');
+            return;
         }
+
+        const existingKeys = new Set(selectedUploadFiles.map(entry => entry.key));
+        let duplicateCount = 0;
+        let overflowCount = 0;
+        candidates.forEach(file => {
+            const key = selectedFileKey(file);
+            if (existingKeys.has(key)) {
+                duplicateCount += 1;
+                return;
+            }
+            if (selectedUploadFiles.length >= 10) {
+                overflowCount += 1;
+                return;
+            }
+            existingKeys.add(key);
+            selectedUploadFiles.push({ file, key, previewUrl: URL.createObjectURL(file) });
+        });
+        cameraInput.value = '';
+        galleryInput.value = '';
+        renderSelectedFiles();
+        if (overflowCount) showToast(`最大10枚です。${overflowCount}枚は追加されませんでした`, '⚠️');
+        else if (duplicateCount) showToast('同じ画像は重複せず1枚だけ追加しました', 'ℹ️');
+    }
+
+    cameraButton.addEventListener('click', () => {
+        if (selectedUploadFiles.length >= 10) return;
+        cameraInput.value = '';
+        cameraInput.click();
+    });
+    galleryButton.addEventListener('click', () => {
+        if (selectedUploadFiles.length >= 10) return;
+        galleryInput.value = '';
+        galleryInput.click();
+    });
+    cameraInput.addEventListener('change', event => addSelectedFiles(event.target.files));
+    galleryInput.addEventListener('change', event => addSelectedFiles(event.target.files));
+    clearFilesButton.addEventListener('click', clearSelectedFiles);
+    selectedFileList.addEventListener('click', event => {
+        const button = event.target.closest('[data-remove-selected]');
+        if (!button) return;
+        const index = Number(button.dataset.removeSelected);
+        const [removed] = selectedUploadFiles.splice(index, 1);
+        if (removed) URL.revokeObjectURL(removed.previewUrl);
+        renderSelectedFiles();
+    });
+    analyzeFilesButton.addEventListener('click', () => {
+        if (!selectedUploadFiles.length) {
+            showToast('解析する画像を1枚以上追加してください', '⚠️');
+            return;
+        }
+        const files = selectedUploadFiles.map(entry => entry.file);
+        analyzeFilesButton.disabled = true;
+        goToStep(2);
+        analyzeFiles(files);
     });
 
     // ドラッグ&ドロップ
@@ -1159,25 +1258,9 @@ function initUploadModal() {
         e.preventDefault();
         uploadZone.classList.remove('dragover');
         if (e.dataTransfer.files.length > 0) {
-            handleUpload(e.dataTransfer.files);
+            addSelectedFiles(e.dataTransfer.files);
         }
     });
-
-    // アップロード処理 → ステップ2
-    function handleUpload(files) {
-        const selectedFiles = Array.from(files).filter(file => !file.type || file.type.startsWith("image/"));
-        if (selectedFiles.length === 0) {
-            showToast("画像ファイルを選択してください", "⚠️");
-            return;
-        }
-        if (selectedFiles.length > 10) {
-            showToast("一度に選択できる画像は10枚までです", "⚠️");
-            return;
-        }
-
-        goToStep(2);
-        analyzeFiles(selectedFiles);
-    }
 
     // 実画像解析。APIへの送信は進捗演出より先に開始し、不要な待機を作らない。
     async function analyzeFiles(files) {
@@ -1245,6 +1328,7 @@ function initUploadModal() {
             reviewQueue = resultData;
             currentReviewIndex = 0;
             registeredReceiptCount = 0;
+            clearSelectedFiles();
             goToStep(3);
             showReviewForm(reviewQueue[currentReviewIndex]);
         } catch (e) {
@@ -1263,7 +1347,7 @@ function initUploadModal() {
             showToast(message, '⚠️');
             setTimeout(() => {
                 goToStep(1);
-                fileInput.value = '';
+                renderSelectedFiles();
             }, 700);
         }
     }
@@ -1543,7 +1627,7 @@ function initUploadModal() {
     // モーダルリセット
     function resetModal() {
         goToStep(1);
-        fileInput.value = '';
+        clearSelectedFiles();
         reviewItems = [];
         editingReceiptId = null;
         approveBtn.textContent = '✓ 承認して登録';
@@ -1569,6 +1653,7 @@ function initUploadModal() {
 
     window.openReceiptEditor = function(receipt) {
         if (!receipt) return;
+        clearSelectedFiles();
         const draft = {
             ...receipt,
             items: (receipt.items || []).map(item => ({ ...item }))

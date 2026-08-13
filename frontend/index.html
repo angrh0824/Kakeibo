@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Serif+JP:wght@400;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=20260813-balance1">
+    <link rel="stylesheet" href="css/style.css?v=20260813-capture1">
     <link rel="stylesheet" href="css/billing.css?v=20260813-balance1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <script src="js/config.js"></script>
@@ -452,11 +452,34 @@
                 <div class="modal-step active" id="step-upload">
                     <div class="upload-zone" id="upload-zone">
                         <div class="upload-icon-large">📷</div>
-                        <p class="upload-title">レシート画像をアップロード</p>
-                        <p class="upload-hint">ドラッグ&ドロップ、またはタップして複数選択</p>
-                        <button class="btn btn-secondary" id="btn-select-file">ファイルを選択</button>
-                        <input type="file" id="file-input" accept="image/*" capture="environment" multiple hidden>
-                        <p class="upload-note">📱 最大10枚まで選択できます。1枚の写真に複数レシートがあっても解析します。</p>
+                        <p class="upload-title">レシート画像を追加</p>
+                        <p class="upload-hint">撮影するか、写真ライブラリから選んでください。追加後すぐには解析しません。</p>
+                        <div class="upload-source-actions" aria-label="画像の追加方法">
+                            <button class="btn btn-secondary upload-source-btn" id="btn-open-camera" type="button">
+                                <span aria-hidden="true">📷</span><span id="camera-action-label">カメラで撮影</span>
+                            </button>
+                            <button class="btn btn-secondary upload-source-btn" id="btn-select-gallery" type="button">
+                                <span aria-hidden="true">🖼️</span><span id="gallery-action-label">写真から選ぶ</span>
+                            </button>
+                        </div>
+                        <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
+                        <input type="file" id="gallery-input" accept="image/*" multiple hidden>
+
+                        <section class="upload-selection" id="upload-selection" aria-live="polite" hidden>
+                            <div class="upload-selection-header">
+                                <div>
+                                    <strong id="selected-file-count">0枚を選択中</strong>
+                                    <span id="selected-file-remaining">あと10枚追加できます</span>
+                                </div>
+                                <button class="upload-clear-btn" id="btn-clear-files" type="button">すべて外す</button>
+                            </div>
+                            <div class="selected-file-list" id="selected-file-list" role="list"></div>
+                            <button class="btn btn-primary upload-analyze-btn" id="btn-analyze-files" type="button" disabled>
+                                選択した画像をまとめて解析
+                            </button>
+                        </section>
+
+                        <p class="upload-note">📱 合計10枚まで追加できます。撮影後も続けて撮るか、写真から追加できます。1枚に複数レシートが写っていても解析します。</p>
                     </div>
                 </div>
 
@@ -574,9 +597,9 @@
 
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="js/auth.js?v=20260813-pixel1"></script>
+    <script src="js/auth.js?v=20260813-capture1"></script>
     <script src="js/shared-data.js"></script>
-    <script src="js/app.js?v=20260813-balance1"></script>
+    <script src="js/app.js?v=20260813-capture1"></script>
     <script src="js/access-management.js"></script>
     <script src="js/billing.js?v=20260813-balance1"></script>
 </body>

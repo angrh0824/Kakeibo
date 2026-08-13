@@ -8,6 +8,7 @@
     const enabled = clientId.length > 0;
     let googleButtonRendered = false;
     let currentUser = null;
+    let authViewportFrame = 0;
 
     function getApiBaseUrl() {
         const configuredBase = String(window.KAKEIBO_API_BASE_URL || '').trim();
@@ -77,11 +78,42 @@
         error.hidden = !message;
     }
 
+    function syncAuthViewport() {
+        const gate = document.getElementById('auth-gate');
+        const viewport = window.visualViewport;
+        if (!gate || !viewport) return;
+        const width = Math.max(1, Math.round(viewport.width));
+        const height = Math.max(1, Math.round(viewport.height));
+        if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+        gate.style.setProperty('--auth-viewport-left', `${Math.round(viewport.offsetLeft || 0)}px`);
+        gate.style.setProperty('--auth-viewport-top', `${Math.round(viewport.offsetTop || 0)}px`);
+        gate.style.setProperty('--auth-viewport-width', `${width}px`);
+        gate.style.setProperty('--auth-viewport-height', `${height}px`);
+        gate.classList.add('auth-visual-viewport');
+    }
+
+    function requestAuthViewportSync() {
+        if (authViewportFrame) return;
+        authViewportFrame = window.requestAnimationFrame(() => {
+            authViewportFrame = 0;
+            syncAuthViewport();
+        });
+    }
+
+    function initializeAuthViewport() {
+        syncAuthViewport();
+        window.addEventListener('resize', requestAuthViewportSync, { passive: true });
+        window.addEventListener('orientationchange', requestAuthViewportSync, { passive: true });
+        window.visualViewport?.addEventListener('resize', requestAuthViewportSync, { passive: true });
+        window.visualViewport?.addEventListener('scroll', requestAuthViewportSync, { passive: true });
+    }
+
     function showGate(message = '') {
         document.body.classList.add('auth-required');
         document.body.classList.remove('authenticated', 'auth-pending');
         const gate = document.getElementById('auth-gate');
         if (gate) gate.setAttribute('aria-hidden', 'false');
+        requestAuthViewportSync();
         setError(message);
         renderGoogleButton();
     }
@@ -208,6 +240,7 @@
     }
 
     async function initialize() {
+        initializeAuthViewport();
         document.getElementById('btn-sign-out')?.addEventListener('click', () => {
             clearSession();
             window.google?.accounts?.id?.disableAutoSelect();
