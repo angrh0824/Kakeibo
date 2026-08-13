@@ -16,3 +16,6 @@ env/
 Thumbs.db
 .vscode/
 .idea/
+
+# Codexの一時添付ファイル（公開リポジトリへ含めない）
+.codex-remote-attachments/

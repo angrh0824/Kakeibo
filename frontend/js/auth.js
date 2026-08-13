@@ -159,6 +159,21 @@
         });
     }
 
+    function googleButtonWidth(container) {
+        const visualWidth = Math.floor(
+            window.visualViewport?.width
+            || document.documentElement.clientWidth
+            || window.innerWidth
+            || 320
+        );
+        const containerWidth = Math.floor(
+            container.getBoundingClientRect().width
+            || container.clientWidth
+            || visualWidth - 40
+        );
+        return Math.min(320, Math.max(200, Math.min(containerWidth, visualWidth - 40)));
+    }
+
     async function renderGoogleButton() {
         if (!enabled || googleButtonRendered) return;
         const container = document.getElementById('google-signin-button');
@@ -171,9 +186,10 @@
                 auto_select: false,
                 cancel_on_tap_outside: false,
             });
+            await new Promise(resolve => window.requestAnimationFrame(resolve));
             googleIdentity.renderButton(container, {
                 type: 'standard', theme: 'filled_black', size: 'large', shape: 'pill', text: 'signin_with',
-                width: Math.min(320, Math.max(200, Math.floor(container.getBoundingClientRect().width || window.innerWidth - 68))),
+                width: googleButtonWidth(container),
                 locale: 'ja',
             });
             googleButtonRendered = true;
