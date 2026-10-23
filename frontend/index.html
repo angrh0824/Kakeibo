@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Serif+JP:wght@400;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=20260813-capture1">
+    <link rel="stylesheet" href="css/style.css?v=20261023-review1">
     <link rel="stylesheet" href="css/billing.css?v=20260813-balance1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <script src="js/config.js"></script>
@@ -474,9 +474,6 @@
                                 <button class="upload-clear-btn" id="btn-clear-files" type="button">すべて外す</button>
                             </div>
                             <div class="selected-file-list" id="selected-file-list" role="list"></div>
-                            <button class="btn btn-primary upload-analyze-btn" id="btn-analyze-files" type="button" disabled>
-                                選択した画像をまとめて解析
-                            </button>
                         </section>
 
                         <p class="upload-note">📱 合計10枚まで追加できます。撮影後も続けて撮るか、写真から追加できます。1枚に複数レシートが写っていても解析します。</p>
@@ -521,63 +518,112 @@
 
                 <!-- Step 3: Review & Edit -->
                 <div class="modal-step" id="step-review">
-                    <div class="review-form" id="review-form">
-                        <p class="review-batch-status" id="review-batch-status" hidden></p>
-                        <div class="review-meta-grid">
-                            <div class="form-group">
-                                <label for="review-store">店舗名</label>
-                                <input type="text" class="form-input" id="review-store" placeholder="店舗名">
+                    <p class="review-batch-status" id="review-batch-status" hidden></p>
+                    <div class="review-layout" id="review-layout">
+                        <aside class="review-source" id="review-source" aria-label="元のレシート画像" hidden>
+                            <button class="review-source-toggle" id="review-source-toggle" type="button" aria-expanded="true" aria-controls="review-source-body">
+                                <span class="review-source-title">元のレシート画像</span>
+                                <span class="review-source-caption" id="review-source-caption"></span>
+                                <span class="review-source-chevron" aria-hidden="true"></span>
+                            </button>
+                            <div class="review-source-body" id="review-source-body">
+                                <button class="review-source-frame" id="review-source-open" type="button" aria-label="レシート画像を拡大表示">
+                                    <img id="review-source-image" alt="" draggable="false">
+                                    <span class="review-source-zoom-hint" aria-hidden="true">🔍 タップで拡大</span>
+                                </button>
+                                <p class="review-source-empty" id="review-source-empty" hidden></p>
+                                <p class="review-source-note" id="review-source-note" hidden></p>
+                                <div class="review-source-thumbs" id="review-source-thumbs" role="group" aria-label="解析した画像を切り替え" hidden></div>
                             </div>
-                            <div class="form-group">
-                                <label for="review-date">日時</label>
-                                <input type="datetime-local" class="form-input" id="review-date">
-                            </div>
-                            <div class="form-group">
-                                <label>信頼度</label>
-                                <div class="confidence-display" id="review-confidence">
-                                    <div class="confidence-bar-lg">
-                                        <div class="confidence-fill-lg" id="confidence-fill-lg"></div>
+                        </aside>
+                        <div class="review-form" id="review-form">
+                            <div class="review-meta-grid">
+                                <div class="form-group">
+                                    <label for="review-store">店舗名</label>
+                                    <input type="text" class="form-input" id="review-store" placeholder="店舗名">
+                                </div>
+                                <div class="form-group">
+                                    <label for="review-date">日時</label>
+                                    <input type="datetime-local" class="form-input" id="review-date">
+                                </div>
+                                <div class="form-group">
+                                    <label>信頼度</label>
+                                    <div class="confidence-display" id="review-confidence">
+                                        <div class="confidence-bar-lg">
+                                            <div class="confidence-fill-lg" id="confidence-fill-lg"></div>
+                                        </div>
+                                        <span class="confidence-pct" id="confidence-pct">--%</span>
                                     </div>
-                                    <span class="confidence-pct" id="confidence-pct">--%</span>
                                 </div>
                             </div>
-                        </div>
 
-                        <div class="review-items-section">
-                            <div class="review-items-header">
-                                <h4>購入品目</h4>
-                                <button class="btn btn-secondary btn-sm" id="btn-add-item" type="button">＋ 品目を追加</button>
+                            <div class="review-items-section">
+                                <div class="review-items-header">
+                                    <h4>購入品目</h4>
+                                    <button class="btn btn-secondary btn-sm" id="btn-add-item" type="button">＋ 品目を追加</button>
+                                </div>
+                                <div class="review-items-scroll">
+                                    <table class="review-items-table" id="review-items-table">
+                                        <thead>
+                                            <tr>
+                                                <th>品名</th>
+                                                <th class="col-price">単価</th>
+                                                <th class="col-qty">数量</th>
+                                                <th class="col-category">カテゴリ</th>
+                                                <th class="col-subtotal">小計</th>
+                                                <th class="col-action"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="review-items-body"></tbody>
+                                    </table>
+                                </div>
                             </div>
-                            <div class="review-items-scroll">
-                                <table class="review-items-table" id="review-items-table">
-                                    <thead>
-                                        <tr>
-                                            <th>品名</th>
-                                            <th class="col-price">単価</th>
-                                            <th class="col-qty">数量</th>
-                                            <th class="col-category">カテゴリ</th>
-                                            <th class="col-subtotal">小計</th>
-                                            <th class="col-action"></th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="review-items-body"></tbody>
-                                </table>
-                            </div>
-                        </div>
 
-                        <div class="review-total-bar">
-                            <span class="review-total-label">合計金額</span>
-                            <span class="review-total-value" id="review-total">¥0</span>
+                            <div class="review-total-bar" id="review-total-bar">
+                                <div class="review-total-row">
+                                    <div class="review-total-main">
+                                        <span class="review-total-label">品目の合計</span>
+                                        <span class="review-total-value" id="review-total">¥0</span>
+                                    </div>
+                                    <div class="review-receipt-total">
+                                        <label for="review-receipt-total">レシート記載の合計</label>
+                                        <input type="number" class="form-input" id="review-receipt-total" min="0" step="1" inputmode="numeric" placeholder="未読取">
+                                    </div>
+                                </div>
+                                <div class="review-total-diff" id="review-total-diff" role="status" aria-live="polite" hidden>
+                                    <strong class="review-total-diff-amount" id="review-total-diff-amount"></strong>
+                                    <span class="review-total-diff-text" id="review-total-diff-text"></span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
             <div class="modal-footer" id="modal-footer">
-                <button class="btn btn-secondary" id="btn-modal-cancel">キャンセル</button>
-                <button class="btn btn-primary btn-glow" id="btn-modal-approve" style="display:none;">✓ 承認して登録</button>
+                <button class="review-footer-diff" id="review-footer-diff" type="button" hidden></button>
+                <button class="btn btn-secondary" id="btn-modal-cancel" type="button">キャンセル</button>
+                <button class="btn btn-primary upload-analyze-btn" id="btn-analyze-files" type="button" disabled>選択した画像をまとめて解析</button>
+                <button class="btn btn-primary btn-glow" id="btn-modal-approve" type="button" style="display:none;">✓ 承認して登録</button>
             </div>
         </div>
+    </div>
+
+    <!-- ===== Receipt Image Lightbox ===== -->
+    <div class="image-lightbox" id="image-lightbox" role="dialog" aria-modal="true" aria-label="レシート画像の拡大表示" hidden>
+        <div class="image-lightbox-toolbar">
+            <span class="image-lightbox-caption" id="image-lightbox-caption"></span>
+            <div class="image-lightbox-actions">
+                <button class="btn btn-icon" type="button" data-lightbox-zoom="out" aria-label="縮小">－</button>
+                <button class="btn btn-icon image-lightbox-reset" type="button" data-lightbox-zoom="reset" aria-label="全体表示に戻す">全体</button>
+                <button class="btn btn-icon" type="button" data-lightbox-zoom="in" aria-label="拡大">＋</button>
+                <button class="btn btn-icon" id="image-lightbox-close" type="button" aria-label="拡大表示を閉じる">✕</button>
+            </div>
+        </div>
+        <div class="image-lightbox-stage" id="image-lightbox-stage">
+            <img id="image-lightbox-image" alt="" draggable="false">
+        </div>
+        <p class="image-lightbox-hint">ピンチ・ダブルタップ・ホイールで拡大、ドラッグで移動</p>
     </div>
 
     <!-- Toast Notification Container -->
@@ -599,7 +645,7 @@
 
     <script src="js/auth.js?v=20260813-capture1"></script>
     <script src="js/shared-data.js"></script>
-    <script src="js/app.js?v=20260813-category1"></script>
+    <script src="js/app.js?v=20261023-review1"></script>
     <script src="js/access-management.js"></script>
     <script src="js/billing.js?v=20260813-balance1"></script>
 </body>

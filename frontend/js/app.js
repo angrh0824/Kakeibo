@@ -1032,6 +1032,199 @@ function initMonthSelector() {
     updateMonth();
 }
 
+// ===== レシート画像の拡大表示（ピンチ・ダブルタップ・ホイール対応） =====
+function createImageLightbox() {
+    const root = document.getElementById('image-lightbox');
+    const stage = document.getElementById('image-lightbox-stage');
+    const image = document.getElementById('image-lightbox-image');
+    const caption = document.getElementById('image-lightbox-caption');
+    const closeButton = document.getElementById('image-lightbox-close');
+    const MIN_SCALE = 1;
+    const MAX_SCALE = 6;
+    const pointers = new Map();
+    let view = { scale: 1, x: 0, y: 0 };
+    let gesture = null;
+    let lastTap = null;
+    let returnFocus = null;
+
+    function clampScale(scale) {
+        return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
+    }
+
+    // 拡大後も画像の端がステージ内側へ入り込みすぎないよう移動量を制限する。
+    function applyView(next) {
+        const scale = clampScale(next.scale);
+        const maxX = Math.max(0, (image.offsetWidth * scale - stage.clientWidth) / 2);
+        const maxY = Math.max(0, (image.offsetHeight * scale - stage.clientHeight) / 2);
+        view = {
+            scale,
+            x: Math.min(maxX, Math.max(-maxX, next.x)),
+            y: Math.min(maxY, Math.max(-maxY, next.y))
+        };
+        image.style.transform = `translate(-50%, -50%) translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+        root.classList.toggle('is-zoomed', view.scale > 1.01);
+    }
+
+    // ステージ中央を原点とした座標へ変換する。
+    function stagePoint(clientX, clientY) {
+        const rect = stage.getBoundingClientRect();
+        return { x: clientX - rect.left - rect.width / 2, y: clientY - rect.top - rect.height / 2 };
+    }
+
+    // 指定点の下にある画像位置を固定したまま倍率を変える。
+    function zoomAt(point, scale) {
+        const target = clampScale(scale);
+        const ratio = target / view.scale;
+        applyView({
+            scale: target,
+            x: point.x - (point.x - view.x) * ratio,
+            y: point.y - (point.y - view.y) * ratio
+        });
+    }
+
+    function beginGesture() {
+        const points = Array.from(pointers.values());
+        if (points.length >= 2) {
+            const [a, b] = points;
+            gesture = {
+                type: 'pinch',
+                distance: Math.hypot(b.x - a.x, b.y - a.y) || 1,
+                center: stagePoint((a.x + b.x) / 2, (a.y + b.y) / 2),
+                view: { ...view }
+            };
+        } else if (points.length === 1) {
+            gesture = { type: 'pan', start: { x: points[0].x, y: points[0].y }, view: { ...view } };
+        } else {
+            gesture = null;
+        }
+    }
+
+    function handleTap(pointer) {
+        const now = performance.now();
+        if (lastTap && now - lastTap.time < 320 && Math.hypot(pointer.x - lastTap.x, pointer.y - lastTap.y) < 30) {
+            lastTap = null;
+            if (view.scale > 1.01) applyView({ scale: 1, x: 0, y: 0 });
+            else zoomAt(stagePoint(pointer.x, pointer.y), 2.5);
+            return;
+        }
+        lastTap = { time: now, x: pointer.x, y: pointer.y };
+    }
+
+    function endPointer(event) {
+        const pointer = pointers.get(event.pointerId);
+        if (!pointer) return;
+        pointers.delete(event.pointerId);
+        if (event.type === 'pointerup' && pointers.size === 0 && gesture?.type === 'pan') {
+            const moved = Math.hypot(pointer.x - pointer.downX, pointer.y - pointer.downY);
+            if (moved < 10 && performance.now() - pointer.downAt < 300) handleTap(pointer);
+        }
+        beginGesture();
+    }
+
+    stage.addEventListener('pointerdown', event => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        event.preventDefault();
+        try {
+            stage.setPointerCapture(event.pointerId);
+        } catch (_) {
+            // キャプチャできなくてもステージ内の操作は継続できる。
+        }
+        pointers.set(event.pointerId, {
+            x: event.clientX,
+            y: event.clientY,
+            downX: event.clientX,
+            downY: event.clientY,
+            downAt: performance.now()
+        });
+        beginGesture();
+    });
+
+    stage.addEventListener('pointermove', event => {
+        const pointer = pointers.get(event.pointerId);
+        if (!pointer || !gesture) return;
+        pointer.x = event.clientX;
+        pointer.y = event.clientY;
+        if (gesture.type === 'pinch' && pointers.size >= 2) {
+            const [a, b] = Array.from(pointers.values());
+            const center = stagePoint((a.x + b.x) / 2, (a.y + b.y) / 2);
+            const scale = clampScale(gesture.view.scale * (Math.hypot(b.x - a.x, b.y - a.y) || 1) / gesture.distance);
+            const ratio = scale / gesture.view.scale;
+            applyView({
+                scale,
+                x: center.x - (gesture.center.x - gesture.view.x) * ratio,
+                y: center.y - (gesture.center.y - gesture.view.y) * ratio
+            });
+        } else if (gesture.type === 'pan') {
+            applyView({
+                scale: view.scale,
+                x: gesture.view.x + pointer.x - gesture.start.x,
+                y: gesture.view.y + pointer.y - gesture.start.y
+            });
+        }
+    });
+
+    stage.addEventListener('pointerup', endPointer);
+    stage.addEventListener('pointercancel', endPointer);
+    stage.addEventListener('wheel', event => {
+        event.preventDefault();
+        const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+        zoomAt(stagePoint(event.clientX, event.clientY), view.scale * Math.exp(-delta * 0.0018));
+    }, { passive: false });
+
+    root.querySelectorAll('[data-lightbox-zoom]').forEach(button => {
+        button.addEventListener('click', () => {
+            const action = button.dataset.lightboxZoom;
+            if (action === 'reset') applyView({ scale: 1, x: 0, y: 0 });
+            else zoomAt({ x: 0, y: 0 }, view.scale * (action === 'in' ? 1.5 : 1 / 1.5));
+        });
+    });
+
+    function open(src, label = '') {
+        if (!src) return;
+        returnFocus = document.activeElement;
+        pointers.clear();
+        gesture = null;
+        lastTap = null;
+        image.src = src;
+        image.alt = label || 'レシート画像';
+        caption.textContent = label;
+        root.hidden = false;
+        applyView({ scale: 1, x: 0, y: 0 });
+        closeButton.focus();
+    }
+
+    function close() {
+        if (root.hidden) return;
+        root.hidden = true;
+        pointers.clear();
+        gesture = null;
+        image.removeAttribute('src');
+        if (returnFocus && typeof returnFocus.focus === 'function' && document.contains(returnFocus)) returnFocus.focus();
+        returnFocus = null;
+    }
+
+    closeButton.addEventListener('click', close);
+    image.addEventListener('load', () => applyView(view));
+    window.addEventListener('resize', () => {
+        if (!root.hidden) applyView(view);
+    });
+    document.addEventListener('keydown', event => {
+        if (root.hidden) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            close();
+        } else if (event.key === '+' || event.key === '=') {
+            zoomAt({ x: 0, y: 0 }, view.scale * 1.5);
+        } else if (event.key === '-') {
+            zoomAt({ x: 0, y: 0 }, view.scale / 1.5);
+        } else if (event.key === '0') {
+            applyView({ scale: 1, x: 0, y: 0 });
+        }
+    });
+
+    return { open, close };
+}
+
 // ===== Human-in-the-Loop: アップロード & レビューモーダル =====
 function initUploadModal() {
     const modal = document.getElementById('receipt-modal');
@@ -1048,6 +1241,21 @@ function initUploadModal() {
     const cancelBtn = document.getElementById('btn-modal-cancel');
     const approveBtn = document.getElementById('btn-modal-approve');
     const addItemBtn = document.getElementById('btn-add-item');
+    const modalDialog = modal.querySelector('.modal-review');
+    const reviewSource = document.getElementById('review-source');
+    const reviewSourceToggle = document.getElementById('review-source-toggle');
+    const reviewSourceCaption = document.getElementById('review-source-caption');
+    const reviewSourceOpen = document.getElementById('review-source-open');
+    const reviewSourceImage = document.getElementById('review-source-image');
+    const reviewSourceEmpty = document.getElementById('review-source-empty');
+    const reviewSourceNote = document.getElementById('review-source-note');
+    const reviewSourceThumbs = document.getElementById('review-source-thumbs');
+    const receiptTotalInput = document.getElementById('review-receipt-total');
+    const reviewTotalBar = document.getElementById('review-total-bar');
+    const reviewTotalDiff = document.getElementById('review-total-diff');
+    const reviewFooterDiff = document.getElementById('review-footer-diff');
+    const mobileLayoutQuery = window.matchMedia('(max-width: 768px)');
+    const imageLightbox = createImageLightbox();
 
     let currentStep = 1;
     let editingReceiptId = null;
@@ -1055,6 +1263,13 @@ function initUploadModal() {
     let currentReviewIndex = 0;
     let registeredReceiptCount = 0;
     let selectedUploadFiles = [];
+    // 確認ステップで照合する元画像。previewUrlは確認ステップ終了時に解放する。
+    let reviewImages = [];
+    let reviewSourceMessage = '';
+    let activeReviewImageIndex = 0;
+    let reviewSourceCollapsed = false;
+    let analysisRunId = 0;
+    let storedImageRequestId = 0;
     reviewItems = [];
 
     // モーダルを開く
@@ -1133,8 +1348,11 @@ function initUploadModal() {
         const titles = { 1: 'レシートをアップロード', 2: 'AI解析中...', 3: 'AI解析結果の確認・修正' };
         document.getElementById('modal-title').textContent = titles[step];
 
+        analyzeFilesButton.style.display = step === 1 ? 'inline-flex' : 'none';
         approveBtn.style.display = step === 3 ? 'inline-flex' : 'none';
         cancelBtn.textContent = step === 3 ? '破棄する' : 'キャンセル';
+        if (step !== 3) reviewFooterDiff.hidden = true;
+        updateReviewLayoutMode();
         const modalBody = modal.querySelector('.modal-body');
         if (modalBody) modalBody.scrollTop = 0;
     }
@@ -1162,6 +1380,7 @@ function initUploadModal() {
         galleryButton.disabled = count >= 10;
         clearFilesButton.disabled = count === 0;
         analyzeFilesButton.disabled = count === 0;
+        analyzeFilesButton.textContent = count ? `選択した${count}枚をまとめて解析` : '選択した画像をまとめて解析';
         selectedFileList.innerHTML = selectedUploadFiles.map((entry, index) => {
             const name = entry.file.name || `撮影画像 ${index + 1}`;
             return `
@@ -1176,8 +1395,9 @@ function initUploadModal() {
         }).join('');
     }
 
-    function clearSelectedFiles() {
-        selectedUploadFiles.forEach(entry => URL.revokeObjectURL(entry.previewUrl));
+    // keepPreviews: 解析済み画像のプレビューURLを確認ステップへ引き継ぐ場合は解放しない。
+    function clearSelectedFiles({ keepPreviews = false } = {}) {
+        if (!keepPreviews) selectedUploadFiles.forEach(entry => URL.revokeObjectURL(entry.previewUrl));
         selectedUploadFiles = [];
         cameraInput.value = '';
         galleryInput.value = '';
@@ -1240,10 +1460,10 @@ function initUploadModal() {
             showToast('解析する画像を1枚以上追加してください', '⚠️');
             return;
         }
-        const files = selectedUploadFiles.map(entry => entry.file);
+        const entries = selectedUploadFiles.slice();
         analyzeFilesButton.disabled = true;
         goToStep(2);
-        analyzeFiles(files);
+        analyzeFiles(entries);
     });
 
     // ドラッグ&ドロップ
@@ -1263,7 +1483,10 @@ function initUploadModal() {
     });
 
     // 実画像解析。APIへの送信は進捗演出より先に開始し、不要な待機を作らない。
-    async function analyzeFiles(files) {
+    async function analyzeFiles(entries) {
+        const files = entries.map(entry => entry.file);
+        // 解析中にモーダルを閉じた場合は、遅れて届いた結果を表示しない。
+        const runId = ++analysisRunId;
         const status = document.getElementById('analysis-status');
         const ocrProgress = document.getElementById('ocr-progress');
         const parseProgress = document.getElementById('parse-progress');
@@ -1306,6 +1529,7 @@ function initUploadModal() {
             parseProgress.classList.add('is-indeterminate');
 
             const outcome = await analysisRequest;
+            if (runId !== analysisRunId) return;
             if (!outcome.ok) throw outcome.error;
             const resultData = outcome.resultData;
 
@@ -1324,14 +1548,20 @@ function initUploadModal() {
             classifyStep.classList.add('completed');
             classifyStep.querySelector('.a-step-status').textContent = '完了 ✓';
             status.textContent = '解析完了！';
+            if (runId !== analysisRunId) return;
 
             reviewQueue = resultData;
             currentReviewIndex = 0;
             registeredReceiptCount = 0;
-            clearSelectedFiles();
+            setReviewImages(entries.map((entry, index) => ({
+                previewUrl: entry.previewUrl,
+                name: entry.file.name || `撮影画像 ${index + 1}`
+            })));
+            clearSelectedFiles({ keepPreviews: true });
             goToStep(3);
             showReviewForm(reviewQueue[currentReviewIndex]);
         } catch (e) {
+            if (runId !== analysisRunId) return;
             const message = e instanceof Error ? e.message : '画像解析に失敗しました';
             console.error('実画像解析に失敗しました:', e);
             [ocrProgress, parseProgress, classifyProgress].forEach(progress => {
@@ -1374,7 +1604,7 @@ function initUploadModal() {
         if (!res.ok) throw new Error(resJson.detail || `解析APIエラー (${res.status})`);
         if (!resJson.success) throw new Error(resJson.detail || '解析APIが失敗しました');
 
-        const resultData = normalizeAnalysisResults(resJson);
+        const resultData = normalizeAnalysisResults(resJson, files);
         if (resultData.length === 0) throw new Error('画像からレシートを検出できませんでした');
         return resultData;
     }
@@ -1392,7 +1622,31 @@ function initUploadModal() {
         return `${baseUrl}/api/receipts/analyze`;
     }
 
-    function normalizeAnalysisResults(payload) {
+    // 各レシートに、読み取り元となった選択画像の番号(source_image_index)を付ける。特定できなければnull。
+    function normalizeAnalysisResults(payload, files = []) {
+        const images = payload && Array.isArray(payload.images) ? payload.images : [];
+        // APIは送信順に画像ごとの結果を返すため、件数が一致すれば番号で確実に対応付けられる。
+        if (images.length > 0 && images.length === files.length) {
+            const receipts = images.flatMap((image, imageIndex) => (Array.isArray(image.receipts) ? image.receipts : [])
+                .map(receipt => ({ ...receipt, source_image_index: imageIndex })));
+            if (receipts.length > 0) return receipts;
+        }
+        return extractAnalysisReceipts(payload).map(receipt => ({
+            ...receipt,
+            source_image_index: findSourceImageIndex(receipt, files)
+        }));
+    }
+
+    function findSourceImageIndex(receipt, files) {
+        if (files.length === 1) return 0;
+        const filename = receipt && receipt.source_filename;
+        if (!filename) return null;
+        // 連続撮影では同名ファイルになることがあるため、一意に決まる場合だけ採用する。
+        const matches = files.flatMap((file, index) => (file.name === filename ? [index] : []));
+        return matches.length === 1 ? matches[0] : null;
+    }
+
+    function extractAnalysisReceipts(payload) {
         const receipts = payload && Array.isArray(payload.receipts) ? payload.receipts : [];
         if (receipts.length > 0) return receipts;
 
@@ -1430,14 +1684,148 @@ function initUploadModal() {
         document.getElementById('confidence-fill-lg').style.width = confidence + '%';
         document.getElementById('confidence-pct').textContent = confidence + '%';
 
+        const receiptTotal = Number(result && result.total);
+        receiptTotalInput.value = Number.isFinite(receiptTotal) && receiptTotal > 0 ? String(Math.round(receiptTotal)) : '';
+
         reviewItems = (Array.isArray(result && result.items) ? result.items : []).map((item, i) => ({ ...item, id: i }));
         updateReviewBatchStatus();
+        renderReviewSource(result);
         renderReviewItems();
         const modalBody = modal.querySelector('.modal-body');
         if (modalBody) modalBody.scrollTop = 0;
         const itemsScroll = document.querySelector('.review-items-scroll');
         if (itemsScroll) itemsScroll.scrollLeft = 0;
     }
+
+    // ===== 確認ステップの元画像 =====
+    function setReviewImages(images) {
+        clearReviewImages();
+        reviewImages = images;
+    }
+
+    function clearReviewImages() {
+        imageLightbox.close();
+        reviewImages.forEach(image => URL.revokeObjectURL(image.previewUrl));
+        reviewImages = [];
+        reviewSourceMessage = '';
+        activeReviewImageIndex = 0;
+        reviewSourceImage.removeAttribute('src');
+        reviewSourceThumbs.innerHTML = '';
+    }
+
+    // PC幅では画像と品目フォームを横並びにするため、画像がある確認ステップだけモーダルを広げる。
+    function updateReviewLayoutMode() {
+        const hasSource = currentStep === 3 && !reviewSource.hidden;
+        modalDialog.classList.toggle('has-review-source', hasSource);
+        const collapsible = mobileLayoutQuery.matches;
+        reviewSource.classList.toggle('is-collapsed', collapsible && reviewSourceCollapsed);
+        reviewSourceToggle.disabled = !collapsible;
+        reviewSourceToggle.setAttribute('aria-expanded', String(!collapsible || !reviewSourceCollapsed));
+    }
+
+    function getLinkedImageIndex(result) {
+        const index = result ? result.source_image_index : null;
+        return Number.isInteger(index) && reviewImages[index] ? index : null;
+    }
+
+    function renderReviewSource(result) {
+        const hasImages = reviewImages.length > 0;
+        reviewSource.hidden = !hasImages && !reviewSourceMessage;
+        updateReviewLayoutMode();
+        reviewSourceOpen.hidden = !hasImages;
+        reviewSourceEmpty.hidden = hasImages || !reviewSourceMessage;
+        reviewSourceEmpty.textContent = hasImages ? '' : reviewSourceMessage;
+        if (!hasImages) {
+            reviewSourceCaption.textContent = '';
+            reviewSourceNote.hidden = true;
+            reviewSource.classList.remove('has-thumbs');
+            reviewSourceThumbs.hidden = true;
+            return;
+        }
+        const linkedIndex = getLinkedImageIndex(result);
+        showReviewImage(linkedIndex ?? 0);
+    }
+
+    function showReviewImage(index) {
+        const image = reviewImages[index];
+        if (!image) return;
+        const result = reviewQueue[currentReviewIndex];
+        const linkedIndex = getLinkedImageIndex(result);
+        const total = reviewImages.length;
+        activeReviewImageIndex = index;
+        reviewSourceImage.src = image.previewUrl;
+        reviewSourceImage.alt = total > 1 ? `解析した画像 ${index + 1}枚目（${image.name}）` : `解析した画像（${image.name}）`;
+        reviewSourceCaption.textContent = total > 1 ? `画像 ${index + 1} / ${total}` : image.name;
+
+        let note = '';
+        if (linkedIndex === null && total > 1) {
+            note = 'どの画像から読み取ったか特定できませんでした。下の一覧で画像を切り替えて照合してください。';
+        } else if (linkedIndex !== null && linkedIndex !== index) {
+            note = `このレシートの読み取り元は画像 ${linkedIndex + 1} です。`;
+        } else if (linkedIndex !== null) {
+            const sameImage = reviewQueue.filter(receipt => getLinkedImageIndex(receipt) === linkedIndex);
+            if (sameImage.length > 1) {
+                note = `この画像から${sameImage.length}件のレシートを検出しました。いま確認しているのは${sameImage.indexOf(result) + 1}件目です。`;
+            }
+        }
+        reviewSourceNote.textContent = note;
+        reviewSourceNote.hidden = !note;
+
+        reviewSource.classList.toggle('has-thumbs', total > 1);
+        reviewSourceThumbs.hidden = total <= 1;
+        reviewSourceThumbs.innerHTML = total <= 1 ? '' : reviewImages.map((entry, entryIndex) => {
+            const isLinked = entryIndex === linkedIndex;
+            const label = `画像 ${entryIndex + 1}を表示${isLinked ? '（このレシートの読み取り元）' : ''}`;
+            return `
+                <button type="button" class="review-source-thumb${entryIndex === index ? ' is-active' : ''}${isLinked ? ' is-linked' : ''}"
+                    data-review-image="${entryIndex}" aria-pressed="${entryIndex === index}" aria-label="${escapeHtml(label)}">
+                    <img src="${escapeHtml(entry.previewUrl)}" alt="">
+                    <span class="review-source-thumb-index">${entryIndex + 1}</span>
+                    ${isLinked ? '<span class="review-source-thumb-badge">読取元</span>' : ''}
+                </button>`;
+        }).join('');
+    }
+
+    // 保存済みレシートの編集時は、非公開ストレージの画像を認証付きで取得して表示する。
+    async function loadStoredReceiptImage(receipt) {
+        if (!receipt || !receipt.id || !receipt.image_storage?.object_name) return;
+        const requestId = ++storedImageRequestId;
+        reviewSourceMessage = '保存されたレシート画像を読み込み中...';
+        renderReviewSource(reviewQueue[currentReviewIndex]);
+        try {
+            const response = await window.KakeiboShared.request(`/receipts/${encodeURIComponent(receipt.id)}/image`);
+            if (!response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                throw new Error(payload.detail || 'レシート画像を読み込めませんでした。');
+            }
+            const blob = await response.blob();
+            if (requestId !== storedImageRequestId) return;
+            setReviewImages([{ previewUrl: URL.createObjectURL(blob), name: receipt.source_filename || '保存画像' }]);
+            reviewQueue.forEach(entry => { entry.source_image_index = 0; });
+        } catch (error) {
+            if (requestId !== storedImageRequestId) return;
+            reviewSourceMessage = error instanceof Error ? error.message : 'レシート画像を読み込めませんでした。';
+        }
+        renderReviewSource(reviewQueue[currentReviewIndex]);
+    }
+
+    reviewSourceThumbs.addEventListener('click', event => {
+        const button = event.target.closest('[data-review-image]');
+        if (button) showReviewImage(Number(button.dataset.reviewImage));
+    });
+    reviewSourceOpen.addEventListener('click', () => {
+        const image = reviewImages[activeReviewImageIndex];
+        if (image) imageLightbox.open(image.previewUrl, reviewSourceCaption.textContent);
+    });
+    reviewSourceToggle.addEventListener('click', () => {
+        if (!mobileLayoutQuery.matches) return;
+        reviewSourceCollapsed = !reviewSourceCollapsed;
+        updateReviewLayoutMode();
+    });
+    mobileLayoutQuery.addEventListener?.('change', updateReviewLayoutMode);
+    reviewFooterDiff.addEventListener('click', () => {
+        reviewTotalBar.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
 
     function updateReviewBatchStatus() {
         const status = document.getElementById('review-batch-status');
@@ -1525,7 +1913,33 @@ function initUploadModal() {
 
         const total = reviewItems.reduce((s, item) => s + getItemLineTotal(item), 0);
         document.getElementById('review-total').textContent = formatCurrency(total);
+        updateReviewTotalCheck(total);
     }
+
+    // 品目の合計とレシート記載の合計を照合し、差額があれば本文とフッターの両方で知らせる。
+    function updateReviewTotalCheck(itemsTotal) {
+        const rawReceiptTotal = receiptTotalInput.value.trim();
+        const receiptTotal = rawReceiptTotal === '' ? NaN : Math.round(Number(rawReceiptTotal));
+        const hasReceiptTotal = Number.isFinite(receiptTotal) && receiptTotal > 0;
+        const diff = hasReceiptTotal ? itemsTotal - receiptTotal : 0;
+        const isMismatch = hasReceiptTotal && diff !== 0;
+        reviewTotalBar.classList.toggle('is-mismatch', isMismatch);
+        reviewTotalBar.classList.toggle('is-match', hasReceiptTotal && !isMismatch);
+        reviewTotalDiff.hidden = !isMismatch;
+        reviewFooterDiff.hidden = !isMismatch || currentStep !== 3;
+        if (!isMismatch) return;
+
+        const amount = formatCurrency(Math.abs(diff));
+        document.getElementById('review-total-diff-amount').textContent = `差額 ${diff > 0 ? '+' : '−'}${amount}`;
+        document.getElementById('review-total-diff-text').textContent = diff > 0
+            ? `品目の合計がレシートより${amount}多くなっています。重複した品目や単価・数量を画像と見比べてください。`
+            : `品目の合計がレシートより${amount}少なくなっています。読み取り漏れの品目や値引き・税額を画像と見比べてください。`;
+        reviewFooterDiff.textContent = `⚠ レシート合計と${amount}の差額`;
+    }
+
+    receiptTotalInput.addEventListener('input', () => {
+        updateReviewTotalCheck(reviewItems.reduce((sum, item) => sum + getItemLineTotal(item), 0));
+    });
 
     // 品目追加
     addItemBtn.addEventListener('click', () => {
@@ -1626,6 +2040,10 @@ function initUploadModal() {
 
     // モーダルリセット
     function resetModal() {
+        analysisRunId += 1;
+        storedImageRequestId += 1;
+        clearReviewImages();
+        reviewSource.hidden = true;
         goToStep(1);
         clearSelectedFiles();
         reviewItems = [];
@@ -1640,6 +2058,8 @@ function initUploadModal() {
         document.getElementById('review-store').value = '';
         document.getElementById('review-date').value = '';
         document.getElementById('review-total').textContent = '¥0';
+        receiptTotalInput.value = '';
+        updateReviewTotalCheck(0);
         document.getElementById('confidence-fill-lg').style.width = '0%';
         document.getElementById('confidence-pct').textContent = '--%';
         const batchStatus = document.getElementById('review-batch-status');
@@ -1654,6 +2074,7 @@ function initUploadModal() {
     window.openReceiptEditor = function(receipt) {
         if (!receipt) return;
         clearSelectedFiles();
+        clearReviewImages();
         const draft = {
             ...receipt,
             items: (receipt.items || []).map(item => ({ ...item }))
@@ -1667,6 +2088,7 @@ function initUploadModal() {
         document.getElementById('modal-title').textContent = 'レシートを編集';
         approveBtn.textContent = '✓ 更新を保存';
         showReviewForm(draft);
+        loadStoredReceiptImage(draft);
     };
 }
 
