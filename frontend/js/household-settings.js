@@ -117,6 +117,12 @@
         }
     }
 
+    function clearLocal() {
+        try {
+            localStorage.removeItem(householdKey());
+        } catch (_) { /* 削除できなくても動作には影響しない */ }
+    }
+
     function announce() {
         window.dispatchEvent(new CustomEvent('kakeibo:settings-changed', { detail: { settings: get(), mode } }));
     }
@@ -140,6 +146,23 @@
                     if (!response.ok) throw new Error(payload.detail || `設定を読み込めませんでした (${response.status})`);
                     current = normalize(payload.settings);
                     mode = 'server';
+                    // サーバー更新前に端末へ保存していた設定があり、サーバー側がまだ初期値なら移しておく。
+                    const local = readLocal();
+                    if (local && payload.settings?.is_default) {
+                        try {
+                            const migrated = await window.KakeiboShared.requestJson('/household/settings', {
+                                method: 'PUT',
+                                body: JSON.stringify(payloadOf(normalize(local)))
+                            });
+                            current = normalize(migrated.settings || local);
+                            clearLocal();
+                            window.showToast?.('この端末に保存していた予算・カテゴリ・固定費を共有設定へ移しました', 'sync');
+                        } catch (error) {
+                            console.warn('端末の設定をサーバーへ移せませんでした。', error);
+                        }
+                    } else if (local && !payload.settings?.is_default) {
+                        clearLocal();
+                    }
                 }
             } catch (error) {
                 console.warn('家計簿の設定を読み込めませんでした。', error);

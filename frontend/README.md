@@ -44,6 +44,17 @@ python -m http.server 5500
 
 ローカルから実際のFirestoreとCloud Storageを利用する場合はApplication Default Credentialsと対象Google Cloudリソースへの権限が必要です。通常のUI確認では本番Cloud Run APIを使用できます。
 
+## ログインなしで画面を確認する
+
+本番APIに接続せず、サンプルデータで画面だけを確認できます。
+
+```bash
+python tools/preview_server.py
+# http://localhost:5600
+```
+
+`--empty`で記録なしの初回画面、`--legacy`で設定APIがない旧サーバー、`--auth`でログイン画面を確認できます。
+
 ## デプロイ
 
 `.github/workflows/pages.yml`が`frontend`をGitHub Pagesへ配信し、FastAPIはCloud Runで稼働します。
