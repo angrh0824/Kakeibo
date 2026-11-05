@@ -18,6 +18,8 @@ class ReceiptAnalysisError(RuntimeError):
 
 
 # 日本のスーパー・コンビニレシート特有の記法に完全対応した超高精度プロンプト
+DEFAULT_RECEIPT_CATEGORIES = ["食費", "日用品", "衛生用品", "交際費", "その他"]
+
 JAPANESE_RECEIPT_PROMPT = """
 あなたは日本のレシート解析および会計データ抽出の最高峰エキスパートAIです。
 提供されたレシート画像を隅々まで正確に読み取り、画像内にあるすべてのレシートを個別に抽出してください。以下の厳密なルールに従ってJSONを出力してください。
@@ -52,7 +54,7 @@ JAPANESE_RECEIPT_PROMPT = """
      - 例: 「豚ロース生姜焼 923円」の直下に「自動割引 30%∇ -277」がある場合、この商品の実質価格は 646円 (923 - 277) です。
      - 例: 「ひとり鍋 2個 358円」の直下に「組合せ値引(額) -8」がある場合、この商品の実質価格は 350円 (358 - 8) です。
    - 「小計」「消費税等」「合計」「お買物券」「クレ金額」などの集計・決済行は items に含めないでください。
-   - 各商品のカテゴリは [食費, 日用品, 衛生用品, 交際費, その他] から適切なものを1つ割り当ててください。
+   - 各商品のカテゴリは [{categories}] から最も近いものを1つ割り当ててください。どれにも当てはまらない場合は「その他」にしてください。
 
 【出力フォーマット (JSONのみ)】
 {"receipts": [{
@@ -106,8 +108,23 @@ JAPANESE_RECEIPT_PROMPT = """
 必ず余計な解説やMarkdown装飾（```jsonなど）を含めず、ValidなJSONオブジェクトのみを返してください。
 """
 
+def build_receipt_prompt(categories: List[str] | None = None) -> str:
+    """Insert the household's categories into the prompt. Names are user data, so keep them short and plain."""
+    cleaned: List[str] = []
+    for name in categories or DEFAULT_RECEIPT_CATEGORIES:
+        text = " ".join(str(name).replace("[", "").replace("]", "").split())[:40]
+        if text and text not in cleaned:
+            cleaned.append(text)
+    if "その他" not in cleaned:
+        cleaned.append("その他")
+    return JAPANESE_RECEIPT_PROMPT.replace("{categories}", ", ".join(cleaned[:30]))
+
+
 async def analyze_receipt_image(
-    image_bytes: bytes, content_type: str = "image/jpeg", household_id: str = ""
+    image_bytes: bytes,
+    content_type: str = "image/jpeg",
+    household_id: str = "",
+    categories: List[str] | None = None,
 ) -> Dict[str, Any]:
     """
     レシート画像を Base64 に変換し、OpenRouter 上の高精度ビジョンAIに送信して構造化データを取得する関数
@@ -134,7 +151,7 @@ async def analyze_receipt_image(
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": JAPANESE_RECEIPT_PROMPT},
+                    {"type": "text", "text": build_receipt_prompt(categories)},
                     {
                         "type": "image_url",
                         "image_url": {"url": image_data_url}

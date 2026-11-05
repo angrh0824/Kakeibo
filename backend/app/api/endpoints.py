@@ -8,7 +8,14 @@ from fastapi.responses import Response
 
 from app.auth import AuthenticatedUser, require_authorized_user
 from app.config import settings
-from app.models import HouseholdBillingAdminUpdate, HouseholdInviteCreate, ItemMasterUpdate, ReceiptWrite
+from app.models import (
+    CategoryReassign,
+    HouseholdBillingAdminUpdate,
+    HouseholdInviteCreate,
+    HouseholdSettingsWrite,
+    ItemMasterUpdate,
+    ReceiptWrite,
+)
 from app.services.ai_service import ReceiptAnalysisError, analyze_receipt_image
 from app.services.billing_service import (
     BillingStorageError,
@@ -21,6 +28,13 @@ from app.services.billing_service import (
     record_cloud_activity,
     update_household_billing,
     upload_payment_qr,
+)
+from app.services.household_settings import (
+    SettingsNotFoundError,
+    category_names,
+    get_household_settings,
+    reassign_category,
+    save_household_settings,
 )
 from app.services.image_storage import (
     ImageStorageError,
@@ -108,6 +122,7 @@ async def analyze_receipts(
     try:
         active_usage: dict = {}
         await asyncio.to_thread(assert_analysis_allowed, user.household_id, len(uploaded_files))
+        categories = await asyncio.to_thread(category_names, user.household_id)
         images = []
         receipts = []
         for upload in uploaded_files:
@@ -118,6 +133,7 @@ async def analyze_receipts(
                 compressed_bytes,
                 content_type=compressed_content_type,
                 household_id=user.household_id,
+                categories=categories,
             )
             active_usage = result.get("_usage", {})
             image_receipts = result.get("receipts", [])
@@ -254,6 +270,44 @@ async def update_shared_item_master(payload: ItemMasterUpdate, user: Authenticat
         return {"success": True, "affected_receipts": affected}
     except SharedStorageError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/household/settings")
+async def get_shared_household_settings(user: AuthenticatedUser = Depends(require_authorized_user)):
+    started_at = time.perf_counter()
+    try:
+        household_settings = await asyncio.to_thread(get_household_settings, user.household_id)
+        await _record_activity_safely(user.household_id, duration_ms=_elapsed_ms(started_at), firestore_reads=1)
+        return {"success": True, "settings": household_settings}
+    except SharedStorageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/household/settings")
+async def put_shared_household_settings(
+    payload: HouseholdSettingsWrite, user: AuthenticatedUser = Depends(require_authorized_user)
+):
+    started_at = time.perf_counter()
+    try:
+        household_settings = await asyncio.to_thread(save_household_settings, user.household_id, payload, user)
+        await _record_activity_safely(user.household_id, duration_ms=_elapsed_ms(started_at), firestore_reads=1, firestore_writes=1)
+        return {"success": True, "settings": household_settings}
+    except SharedStorageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/household/categories/reassign")
+async def post_category_reassign(payload: CategoryReassign, user: AuthenticatedUser = Depends(require_authorized_user)):
+    started_at = time.perf_counter()
+    try:
+        result = await asyncio.to_thread(reassign_category, user.household_id, payload, user)
+        affected = int(result.get("affected_receipts") or 0)
+        await _record_activity_safely(user.household_id, duration_ms=_elapsed_ms(started_at), firestore_reads=max(2, affected), firestore_writes=affected + 1)
+        return {"success": True, **result}
+    except SettingsNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SharedStorageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/auth/me")
