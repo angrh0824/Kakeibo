@@ -1213,3 +1213,14 @@ body.auth-pending, body.auth-required { min-height: 100dvh; overflow: hidden; }
 .day-group-upcoming .day-label .icon { width: 16px; height: 16px; }
 .tab-item { position: relative; }
 .tab-request-dot { position: absolute; top: 4px; left: calc(50% + 6px); min-width: 18px; height: 18px; margin: 0; padding: 0 5px; font-size: 10px; }
+
+/* 自動ログイン中の表示 */
+.auth-auto-status {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    margin: -8px 0 16px; color: var(--ink-2); font-size: 13px; font-weight: 600; overflow-wrap: anywhere;
+}
+.auth-auto-status::before {
+    content: ""; flex: 0 0 auto; width: 16px; height: 16px; border-radius: 50%;
+    border: 2px solid var(--surface-3); border-top-color: var(--primary); animation: spin 900ms linear infinite;
+}
+.auth-card.is-auto-signing-in .google-signin-button { opacity: 0.55; }

@@ -67,7 +67,8 @@
         <div class="auth-card">
             <div class="auth-mark" aria-hidden="true">家</div>
             <h1>家計簿にログイン</h1>
-            <p class="auth-description">Googleアカウントごとに家計簿を作り、招待した家族や友人とだけ共有できます。初めて使うときは管理者の承認が必要です。</p>
+            <p class="auth-description">Googleアカウントごとに家計簿を作り、招待した家族や友人とだけ共有できます。初めて使うときは管理者の承認が必要です。一度ログインすると、次からはこの端末で自動的にログインします。</p>
+            <p class="auth-auto-status" id="auth-auto-status" role="status" hidden></p>
             <div class="google-signin-button" id="google-signin-button"></div>
             <p class="auth-error" id="auth-error" hidden></p>
             <p class="auth-note">このサイトにパスワードは保存されません。</p>
@@ -805,7 +806,7 @@
 
     <div class="toast-container" id="toast-container" aria-live="polite"></div>
 
-    <script src="js/auth.js?v=20261105-ux1"></script>
+    <script src="js/auth.js?v=20261105-login1"></script>
     <script src="js/shared-data.js?v=20261105-ux1"></script>
     <script src="js/household-settings.js?v=20261105-ux1"></script>
     <script src="js/app.js?v=20261105-ux1"></script>
