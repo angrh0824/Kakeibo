@@ -3,14 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="description" content="AIレシート解析による次世代家計簿アプリ。スマートフォンでレシートを撮影するだけで、支出を自動分類・可視化します。">
-    <meta name="theme-color" content="#080B12">
-    <title>次世代家計簿 - AIレシート解析ダッシュボード</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Serif+JP:wght@400;600;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css?v=20261023-review1">
-    <link rel="stylesheet" href="css/billing.css?v=20260813-balance1">
+    <meta name="description" content="レシートを撮るだけで品目まで記録できる、家族で使える家計簿。予算・固定費・値上がりもひと目で分かります。">
+    <meta name="theme-color" content="#f4f4f1" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+    <meta name="color-scheme" content="light dark">
+    <title>家計簿</title>
+    <script>
+        // テーマは端末ごとの表示設定。描画前に反映してちらつきを防ぐ。
+        try {
+            const theme = localStorage.getItem('kakeibo.theme.v1');
+            if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+        } catch (_) { /* 保存領域が使えない環境では端末設定に従う */ }
+    </script>
+    <link rel="stylesheet" href="css/style.css?v=20261105-ux1">
+    <link rel="stylesheet" href="css/billing.css?v=20261105-ux1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <script src="js/config.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -19,414 +25,511 @@
     <script>
         if (window.KAKEIBO_GOOGLE_CLIENT_ID) document.body.classList.add('auth-pending');
     </script>
+
+    <svg class="icon-sprite" aria-hidden="true" focusable="false">
+        <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
+        <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h12M9 12h12M9 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+        <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M6 17v-5M11 17V7M16 17v-8M21 17V4" transform="translate(-1 0)"/></symbol>
+        <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+        <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></symbol>
+        <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m21 16-5-5-9 9"/></symbol>
+        <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
+        <symbol id="i-receipt" viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/></symbol>
+        <symbol id="i-repeat" viewBox="0 0 24 24"><path d="m17 2 3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="m7 22-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+        <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+        <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+        <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+        <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.2v.1"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+        <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+        <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+        <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
+        <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M21.5 20a6.5 6.5 0 0 0-3.8-5.9"/></symbol>
+        <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M4 20h16"/></symbol>
+        <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 20V9M7 14l5-5 5 5M4 4h16"/></symbol>
+        <symbol id="i-sync" viewBox="0 0 24 24"><path d="M20 11A8 8 0 0 0 5.7 6.1L4 8"/><path d="M4 3.5V8h4.5"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20.5V16h-4.5"/></symbol>
+        <symbol id="i-wallet" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M3 10h18M16 15h2"/></symbol>
+        <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+        <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".6"/></symbol>
+        <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3c.6 4.2 2.8 6.4 7 7-4.2.6-6.4 2.8-7 7-.6-4.2-2.8-6.4-7-7 4.2-.6 6.4-2.8 7-7z"/><path d="M19 15.5c.3 1.6 1 2.3 2.5 2.5-1.5.2-2.2.9-2.5 2.5-.3-1.6-1-2.3-2.5-2.5 1.5-.2 2.2-.9 2.5-2.5z"/></symbol>
+        <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5"/><path d="m10 16-4-4 4-4M6 12h10"/></symbol>
+        <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></symbol>
+        <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+        <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+        <symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"/></symbol>
+    </svg>
+
     <div class="auth-gate" id="auth-gate" aria-hidden="false">
         <div class="auth-card">
             <div class="auth-mark" aria-hidden="true">家</div>
-            <p class="auth-eyebrow">PRIVATE &amp; SHARED FINANCE</p>
-            <h1>あなたの家計簿へログイン</h1>
-            <p class="auth-description">Googleアカウントごとに独立した家計簿を作成し、招待した人とだけ安全に共有できます。初回利用は管理者の承認が必要です。</p>
+            <h1>家計簿にログイン</h1>
+            <p class="auth-description">Googleアカウントごとに家計簿を作り、招待した家族や友人とだけ共有できます。初めて使うときは管理者の承認が必要です。</p>
             <div class="google-signin-button" id="google-signin-button"></div>
             <p class="auth-error" id="auth-error" hidden></p>
-            <p class="auth-note">パスワードをこのサイトへ保存することはありません。</p>
+            <p class="auth-note">このサイトにパスワードは保存されません。</p>
         </div>
     </div>
-    <!-- Sidebar Overlay (mobile) -->
-    <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
-    <aside class="sidebar" id="sidebar">
-        <div class="sidebar-header">
+    <div class="app-shell">
+        <!-- ===== Sidebar (タブレット・PC) ===== -->
+        <aside class="sidebar" id="sidebar" aria-label="メインメニュー">
             <div class="sidebar-brand">
-                <span class="sidebar-logo">📊</span>
-                <div>
-                    <h1>家計簿</h1>
-                    <p class="subtitle">AI Receipt Analytics</p>
+                <span class="brand-mark" aria-hidden="true">家</span>
+                <div class="brand-copy">
+                    <p class="brand-name">家計簿</p>
+                    <p class="brand-household" id="active-household-name">家計簿を選択</p>
                 </div>
             </div>
-        </div>
-        <nav class="sidebar-nav">
-            <a href="#" class="nav-item active" data-page="dashboard">
-                <span class="nav-icon">📈</span>
-                <span class="nav-label">ダッシュボード</span>
+            <div class="sidebar-actions">
+                <button class="btn btn-primary btn-block" id="btn-upload" type="button">
+                    <svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg>
+                    <span class="btn-text">レシートを読み取る</span>
+                </button>
+                <button class="btn btn-secondary btn-block" id="btn-manual-entry" type="button">
+                    <svg class="icon" aria-hidden="true"><use href="#i-pencil"/></svg>
+                    <span>手入力で記録</span>
+                </button>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#home" class="nav-item active" data-page="dashboard">
+                    <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg><span>ホーム</span>
+                </a>
+                <a href="#history" class="nav-item" data-page="receipts">
+                    <svg class="icon" aria-hidden="true"><use href="#i-list"/></svg><span>履歴</span>
+                </a>
+                <a href="#analysis" class="nav-item" data-page="analysis">
+                    <svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg><span>分析</span>
+                </a>
+                <a href="#settings" class="nav-item" data-page="settings">
+                    <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>設定</span>
+                    <span class="nav-request-dot" id="admin-nav-request-count" hidden>0</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="avatar" id="signed-in-user-avatar">家</div>
+                    <div class="user-details">
+                        <p class="user-name" id="signed-in-user-name">ユーザー</p>
+                        <p class="user-email" id="signed-in-user-email"></p>
+                    </div>
+                </div>
+                <button class="btn btn-ghost btn-sign-out" id="btn-sign-out" type="button" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#i-logout"/></svg><span>ログアウト</span>
+                </button>
+            </div>
+        </aside>
+
+        <main class="main-content" id="main-content">
+            <header class="topbar">
+                <div class="topbar-titles">
+                    <h1 id="page-title">ホーム</h1>
+                    <p id="page-subtitle" class="page-subtitle">今月のお金の流れ</p>
+                </div>
+                <div class="month-selector" id="month-selector">
+                    <button class="btn btn-icon" id="prev-month" type="button" aria-label="前の月">
+                        <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"/></svg>
+                    </button>
+                    <button class="month-label" id="current-month" type="button" aria-label="今月に戻る">2026年11月</button>
+                    <button class="btn btn-icon" id="next-month" type="button" aria-label="次の月">
+                        <svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>
+                    </button>
+                </div>
+            </header>
+
+            <div class="sync-banner" id="sync-banner" role="status" hidden></div>
+
+            <!-- ===== ホーム ===== -->
+            <section id="page-dashboard" class="page active" aria-labelledby="page-title">
+                <div class="home-grid">
+                    <article class="card hero-card" id="home-hero" aria-live="polite"></article>
+                    <article class="card" id="home-pending" hidden></article>
+                    <article class="card" id="home-categories">
+                        <header class="card-header">
+                            <h2>カテゴリ別</h2>
+                            <button class="link-button" type="button" data-open-settings="budget">予算を編集</button>
+                        </header>
+                        <div class="category-bars" id="category-bars"></div>
+                    </article>
+                    <article class="card" id="home-pace">
+                        <header class="card-header">
+                            <h2>支出のペース</h2>
+                            <span class="card-caption" id="pace-caption">月初からの累計</span>
+                        </header>
+                        <div class="chart-box chart-box-pace">
+                            <canvas id="pace-chart" role="img" aria-label="今月と先月の累計支出の推移"></canvas>
+                        </div>
+                        <div class="chart-legend" id="pace-legend"></div>
+                    </article>
+                    <article class="card" id="home-prices">
+                        <header class="card-header">
+                            <h2>よく買う品の値動き</h2>
+                            <button class="link-button" type="button" data-page-link="analysis" data-analysis-tab="items">すべて見る</button>
+                        </header>
+                        <div class="price-moves" id="price-moves"></div>
+                    </article>
+                    <article class="card card-span" id="home-recent">
+                        <header class="card-header">
+                            <h2>最近の記録</h2>
+                            <button class="link-button" type="button" data-page-link="receipts">履歴を見る</button>
+                        </header>
+                        <div class="entry-list" id="recent-entries"></div>
+                    </article>
+                </div>
+            </section>
+
+            <!-- ===== 履歴 ===== -->
+            <section id="page-receipts" class="page" aria-labelledby="page-title">
+                <div class="history-summary" id="history-summary"></div>
+                <div class="toolbar">
+                    <label class="search-field">
+                        <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+                        <input type="search" class="form-input" id="receipt-search" placeholder="店名・品名・メモで検索" autocomplete="off">
+                    </label>
+                    <select class="form-input select-input" id="history-category-filter" aria-label="カテゴリで絞り込む">
+                        <option value="all">すべてのカテゴリ</option>
+                    </select>
+                </div>
+                <div class="chip-row" id="receipt-filter" role="group" aria-label="記録の種類で絞り込む">
+                    <button type="button" class="chip is-active" data-filter="all" aria-pressed="true">すべて</button>
+                    <button type="button" class="chip" data-filter="receipt" aria-pressed="false">レシート</button>
+                    <button type="button" class="chip" data-filter="manual" aria-pressed="false">手入力</button>
+                    <button type="button" class="chip" data-filter="recurring" aria-pressed="false">固定費</button>
+                    <button type="button" class="chip" data-filter="review" aria-pressed="false">要確認</button>
+                </div>
+                <div class="history-list" id="receipts-container"></div>
+            </section>
+
+            <!-- ===== 分析 ===== -->
+            <section id="page-analysis" class="page" aria-labelledby="page-title">
+                <div class="segmented" role="tablist" aria-label="分析の切り替え">
+                    <button type="button" role="tab" class="segmented-item is-active" id="analysis-tab-trend" data-analysis-tab="trend" aria-selected="true" aria-controls="analysis-trend">支出の推移</button>
+                    <button type="button" role="tab" class="segmented-item" id="analysis-tab-items" data-analysis-tab="items" aria-selected="false" aria-controls="analysis-items">品目と価格</button>
+                </div>
+
+                <div class="analysis-panel" id="analysis-trend" role="tabpanel" aria-labelledby="analysis-tab-trend">
+                    <div class="stat-row" id="trend-stats"></div>
+                    <article class="card">
+                        <header class="card-header">
+                            <h2>月ごとの支出</h2>
+                            <div class="segmented segmented-sm" role="group" aria-label="表示する期間">
+                                <button type="button" class="segmented-item is-active" data-trend-range="6" aria-pressed="true">6か月</button>
+                                <button type="button" class="segmented-item" data-trend-range="12" aria-pressed="false">12か月</button>
+                            </div>
+                        </header>
+                        <div class="chart-box chart-box-monthly">
+                            <canvas id="monthly-chart" role="img" aria-label="月ごとのカテゴリ別支出"></canvas>
+                        </div>
+                        <div class="chart-legend" id="monthly-legend"></div>
+                        <details class="table-view">
+                            <summary>表で見る</summary>
+                            <div class="table-scroll" id="monthly-table"></div>
+                        </details>
+                    </article>
+                    <article class="card">
+                        <header class="card-header">
+                            <h2>よく行くお店</h2>
+                            <span class="card-caption" id="store-caption">表示中の月</span>
+                        </header>
+                        <div class="rank-list" id="store-ranking"></div>
+                    </article>
+                </div>
+
+                <div class="analysis-panel" id="analysis-items" role="tabpanel" aria-labelledby="analysis-tab-items" hidden>
+                    <div class="stat-row" id="basket-stats"></div>
+                    <div class="toolbar">
+                        <label class="search-field">
+                            <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+                            <input type="search" class="form-input" id="item-search" placeholder="品名で検索" autocomplete="off">
+                        </label>
+                        <select class="form-input select-input" id="item-category-filter" aria-label="カテゴリで絞り込む">
+                            <option value="all">すべてのカテゴリ</option>
+                        </select>
+                        <select class="form-input select-input" id="item-sort" aria-label="並び順">
+                            <option value="count">よく買う順</option>
+                            <option value="rise">値上がり順</option>
+                            <option value="spend">使った金額順</option>
+                            <option value="recent">最近買った順</option>
+                        </select>
+                    </div>
+                    <div class="item-list" id="items-container"></div>
+                </div>
+            </section>
+
+            <!-- ===== 設定 ===== -->
+            <section id="page-settings" class="page" aria-labelledby="page-title">
+                <div class="settings-layout">
+                    <article class="card account-card" id="settings-account">
+                        <div class="account-row">
+                            <div class="avatar" id="settings-avatar" aria-hidden="true">家</div>
+                            <div class="account-copy">
+                                <p class="account-name" id="settings-user-name">ユーザー</p>
+                                <p class="account-meta" id="settings-user-email"></p>
+                            </div>
+                            <button class="btn btn-secondary btn-sm" id="settings-sign-out" type="button" hidden>
+                                <svg class="icon" aria-hidden="true"><use href="#i-logout"/></svg><span>ログアウト</span>
+                            </button>
+                        </div>
+                    </article>
+
+                    <article class="card" id="settings-budget">
+                        <header class="card-header">
+                            <div>
+                                <h2>予算</h2>
+                                <p class="card-description">毎月の予算と、カテゴリごとの目安です。家計簿のメンバー全員で共有されます。</p>
+                            </div>
+                        </header>
+                        <form id="budget-form" class="budget-form" novalidate>
+                            <label class="field field-total">
+                                <span class="field-label">月の予算</span>
+                                <span class="money-input">
+                                    <span aria-hidden="true">¥</span>
+                                    <input class="form-input" id="budget-total" name="monthly_budget" type="number" inputmode="numeric" min="0" step="1000" placeholder="カテゴリの合計を使う">
+                                </span>
+                                <span class="field-help" id="budget-total-help">空欄にすると、カテゴリ予算の合計を月の予算にします。</span>
+                            </label>
+                            <div class="budget-category-list" id="budget-category-list"></div>
+                            <div class="form-actions">
+                                <button class="btn btn-primary" type="submit">予算を保存</button>
+                            </div>
+                        </form>
+                    </article>
+
+                    <article class="card" id="settings-categories">
+                        <header class="card-header">
+                            <div>
+                                <h2>カテゴリ</h2>
+                                <p class="card-description">名前を変えると、これまでの記録もまとめて変わります。AIの読み取りもこのカテゴリで分類します。</p>
+                            </div>
+                            <button class="btn btn-secondary btn-sm" id="btn-add-category" type="button">
+                                <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><span>追加</span>
+                            </button>
+                        </header>
+                        <div class="settings-list" id="category-settings"></div>
+                    </article>
+
+                    <article class="card" id="settings-recurring">
+                        <header class="card-header">
+                            <div>
+                                <h2>固定費</h2>
+                                <p class="card-description">家賃やサブスクなど毎月の支払いです。金額を決めておくと毎月自動で計上されます。電気代のように毎月変わるものは、金額を空欄にすると記録を促します。</p>
+                            </div>
+                            <button class="btn btn-secondary btn-sm" id="btn-add-recurring" type="button">
+                                <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><span>追加</span>
+                            </button>
+                        </header>
+                        <div class="settings-list" id="recurring-settings"></div>
+                    </article>
+
+                    <article class="card" id="settings-display">
+                        <header class="card-header"><h2>表示</h2></header>
+                        <div class="segmented" role="radiogroup" aria-label="テーマ" id="theme-switch">
+                            <button type="button" class="segmented-item" role="radio" data-theme-choice="auto" aria-checked="true">
+                                <svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg>自動
+                            </button>
+                            <button type="button" class="segmented-item" role="radio" data-theme-choice="light" aria-checked="false">
+                                <svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg>ライト
+                            </button>
+                            <button type="button" class="segmented-item" role="radio" data-theme-choice="dark" aria-checked="false">
+                                <svg class="icon" aria-hidden="true"><use href="#i-moon"/></svg>ダーク
+                            </button>
+                        </div>
+                        <p class="field-help">「自動」は端末のライト・ダーク設定に合わせます。この端末だけの設定です。</p>
+                    </article>
+
+                    <article class="card household-access-card">
+                        <header class="card-header">
+                            <div>
+                                <h2>家計簿とメンバー</h2>
+                                <p class="card-description">招待した人とだけ記録を共有します。</p>
+                            </div>
+                            <span class="badge" id="household-role-badge">MEMBER</span>
+                        </header>
+                        <div class="field household-switcher-wrap">
+                            <label class="field-label" for="household-selector">表示する家計簿</label>
+                            <select class="form-input select-input" id="household-selector"></select>
+                        </div>
+                        <form class="household-invite-form" id="household-invite-form">
+                            <label class="field-label" for="household-invite-email">招待するGoogleアカウント</label>
+                            <div class="inline-form-row">
+                                <input class="form-input" id="household-invite-email" type="email" autocomplete="email" placeholder="family@example.com" required>
+                                <button class="btn btn-primary" type="submit">招待する</button>
+                            </div>
+                            <p class="settings-help">招待した人は、管理者の承認後にこの家計簿を選べるようになります。</p>
+                        </form>
+                        <div class="access-list" id="household-members-list">
+                            <p class="settings-help">メンバー情報を読み込み中...</p>
+                        </div>
+                    </article>
+
+                    <article class="card household-billing-card" id="household-billing-card" hidden>
+                        <header class="card-header billing-card-header">
+                            <div>
+                                <h2>利用料金と未精算残高</h2>
+                                <p class="card-description">AI読み取りとクラウドの実費の目安です。</p>
+                            </div>
+                            <input class="form-input billing-month-input" id="billing-period" type="month" aria-label="利用料金の対象月">
+                        </header>
+                        <div class="billing-hero">
+                            <div>
+                                <p class="billing-hero-label">選択月の精算目安</p>
+                                <p class="billing-hero-value" id="billing-payment-amount">¥0</p>
+                                <p class="billing-hero-note">概算原価と運営協力分の合計です。支払いは任意で、1円単位に切り上げています。</p>
+                            </div>
+                            <div class="billing-cost-pair">
+                                <span>概算原価<strong id="billing-base-cost">¥0</strong></span>
+                                <span>運営協力分<strong id="billing-service-fee">¥0</strong></span>
+                            </div>
+                        </div>
+                        <div class="billing-balance-summary">
+                            <div><span>累積未精算残高</span><strong id="billing-outstanding-balance">¥0</strong></div>
+                            <div><span>これまでの利用料金合計</span><strong id="billing-total-charges">¥0</strong></div>
+                        </div>
+                        <div class="billing-limit-panel">
+                            <div class="billing-limit-copy">
+                                <span id="billing-limit-label">累積利用上限 ¥0</span>
+                                <span id="billing-limit-remaining">残り ¥0</span>
+                            </div>
+                            <div class="billing-progress"><span id="billing-limit-progress"></span></div>
+                            <p class="settings-help" id="billing-limit-message">利用状況を読み込み中...</p>
+                        </div>
+                        <div class="billing-breakdown">
+                            <div><span>AI / OpenRouter</span><strong id="billing-cost-ai">¥0</strong></div>
+                            <div><span>Cloud Run</span><strong id="billing-cost-run">¥0</strong></div>
+                            <div><span>Firestore</span><strong id="billing-cost-firestore">¥0</strong></div>
+                            <div><span>画像ストレージ</span><strong id="billing-cost-storage">¥0</strong></div>
+                        </div>
+                        <div class="billing-usage-chips" id="billing-usage-chips"></div>
+                        <div class="paypay-panel" id="paypay-panel">
+                            <div class="paypay-copy">
+                                <span class="paypay-mark" aria-hidden="true">P</span>
+                                <div><strong>PayPayで任意精算</strong><p id="paypay-recipient">支払先を確認中...</p></div>
+                            </div>
+                            <img id="paypay-qr-image" class="paypay-qr-image" alt="PayPay支払いQRコード" hidden>
+                            <p class="settings-help" id="paypay-qr-empty">QRコードは管理者が登録すると表示されます。</p>
+                        </div>
+                        <p class="billing-estimate-note" id="billing-estimate-note"></p>
+                    </article>
+
+                    <article class="card platform-admin-card" id="platform-admin-card" hidden>
+                        <header class="card-header">
+                            <div>
+                                <h2>利用申請とアカウント管理</h2>
+                                <p class="card-description">初回ログインの申請を承認し、必要に応じて利用を停止できます。</p>
+                            </div>
+                            <span class="badge admin-request-badge" id="admin-request-count">0 PENDING</span>
+                        </header>
+                        <h3 class="access-section-title">承認待ち</h3>
+                        <div class="access-list" id="admin-signup-requests"></div>
+                        <h3 class="access-section-title">利用アカウント</h3>
+                        <div class="access-list" id="admin-user-list"></div>
+                    </article>
+
+                    <article class="card platform-billing-card" id="platform-billing-card" hidden>
+                        <header class="card-header billing-card-header">
+                            <div>
+                                <h2>全家計簿の料金と利用上限</h2>
+                                <p class="card-description">管理者だけに表示されます。</p>
+                            </div>
+                            <input class="form-input billing-month-input" id="admin-billing-period" type="month" aria-label="管理料金の対象月">
+                        </header>
+                        <div class="admin-billing-total">
+                            <span>選択月の概算原価<strong id="admin-billing-base-total">¥0</strong></span>
+                            <span>選択月の精算目安<strong id="admin-billing-payment-total">¥0</strong></span>
+                            <span>全家計簿の未精算残高<strong id="admin-billing-outstanding-total">¥0</strong></span>
+                        </div>
+                        <form class="billing-qr-upload" id="billing-qr-upload-form">
+                            <div>
+                                <strong>PayPay QRコード</strong>
+                                <p class="settings-help">非公開のCloud Storageに保存され、家計簿のオーナーにだけ表示されます。</p>
+                            </div>
+                            <label class="btn btn-secondary" for="billing-qr-file">QR画像を選択</label>
+                            <input id="billing-qr-file" type="file" accept="image/*" hidden>
+                            <button class="btn btn-primary" type="submit">QRを登録</button>
+                        </form>
+                        <div class="admin-billing-list" id="admin-billing-list">
+                            <p class="settings-help">料金情報を読み込み中...</p>
+                        </div>
+                    </article>
+
+                    <article class="card data-safety-card">
+                        <header class="card-header">
+                            <div>
+                                <h2>データ</h2>
+                                <p class="card-description">記録はGoogle Cloudに保存され、この家計簿のメンバーだけが見られます。</p>
+                            </div>
+                        </header>
+                        <div class="data-safety-actions">
+                            <button class="btn btn-secondary" id="btn-export-csv" type="button">
+                                <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span>表計算用に書き出す（CSV）</span>
+                            </button>
+                            <button class="btn btn-secondary" id="btn-export-data" type="button">
+                                <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span>バックアップ（JSON）</span>
+                            </button>
+                            <button class="btn btn-secondary" id="btn-sync-data" type="button">
+                                <svg class="icon" aria-hidden="true"><use href="#i-sync"/></svg><span>今すぐ同期</span>
+                            </button>
+                        </div>
+                        <p class="storage-status" id="storage-status">Google Cloudの共有データを確認中...</p>
+                    </article>
+                </div>
+            </section>
+        </main>
+
+        <!-- ===== Bottom tab bar (スマホ) ===== -->
+        <nav class="tabbar" aria-label="メインメニュー">
+            <a href="#home" class="tab-item nav-item active" data-page="dashboard">
+                <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg><span>ホーム</span>
             </a>
-            <a href="#" class="nav-item" data-page="receipts">
-                <span class="nav-icon">🧾</span>
-                <span class="nav-label">レシート一覧</span>
+            <a href="#history" class="tab-item nav-item" data-page="receipts">
+                <svg class="icon" aria-hidden="true"><use href="#i-list"/></svg><span>履歴</span>
             </a>
-            <a href="#" class="nav-item" data-page="items">
-                <span class="nav-icon">🏷️</span>
-                <span class="nav-label">商品マスタ</span>
+            <button type="button" class="tab-fab" id="btn-record" aria-label="記録する" aria-haspopup="dialog">
+                <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>
+            </button>
+            <a href="#analysis" class="tab-item nav-item" data-page="analysis">
+                <svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg><span>分析</span>
             </a>
-            <a href="#" class="nav-item" data-page="trends">
-                <span class="nav-icon">📉</span>
-                <span class="nav-label">価格推移</span>
-            </a>
-            <a href="#" class="nav-item" data-page="settings">
-                <span class="nav-icon">⚙️</span>
-                <span class="nav-label">設定</span>
-                <span class="nav-request-dot" id="admin-nav-request-count" hidden>0</span>
+            <a href="#settings" class="tab-item nav-item" data-page="settings">
+                <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span>設定</span>
+                <span class="nav-request-dot tab-request-dot" id="admin-tab-request-count" hidden>0</span>
             </a>
         </nav>
-        <div class="sidebar-footer">
-            <div class="user-info">
-                <div class="avatar" id="signed-in-user-avatar">家</div>
-                <div class="user-details">
-                    <p class="user-name" id="signed-in-user-name">ユーザー</p>
-                    <p class="user-household" id="active-household-name">家計簿を選択</p>
-                    <p class="user-email" id="signed-in-user-email"></p>
-                </div>
+    </div>
+
+    <!-- ===== 記録方法の選択（スマホ） ===== -->
+    <div class="sheet-overlay" id="record-sheet" hidden>
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="record-sheet-title">
+            <div class="sheet-handle" aria-hidden="true"></div>
+            <h2 class="sheet-title" id="record-sheet-title">記録する</h2>
+            <div class="record-options">
+                <button type="button" class="record-option" data-record="camera">
+                    <span class="record-option-icon"><svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg></span>
+                    <span class="record-option-copy"><strong>レシートを撮影</strong><span>品目と金額をAIが読み取ります</span></span>
+                </button>
+                <button type="button" class="record-option" data-record="gallery">
+                    <span class="record-option-icon"><svg class="icon" aria-hidden="true"><use href="#i-image"/></svg></span>
+                    <span class="record-option-copy"><strong>写真から読み取る</strong><span>最大10枚までまとめて選べます</span></span>
+                </button>
+                <button type="button" class="record-option" data-record="manual">
+                    <span class="record-option-icon"><svg class="icon" aria-hidden="true"><use href="#i-pencil"/></svg></span>
+                    <span class="record-option-copy"><strong>手入力</strong><span>現金払い・家賃・サブスクなど</span></span>
+                </button>
             </div>
-            <button class="btn btn-secondary btn-sign-out" id="btn-sign-out" type="button" hidden>ログアウト</button>
+            <p class="sheet-note" id="record-sheet-note" hidden></p>
+            <button type="button" class="btn btn-secondary btn-block" data-close-sheet>閉じる</button>
         </div>
-    </aside>
-
-    <main class="main-content" id="main-content">
-        <header class="topbar">
-            <div class="topbar-left">
-                <button class="hamburger" id="hamburger-btn" aria-label="メニューを開く">
-                    <span></span><span></span><span></span>
-                </button>
-                <div class="topbar-titles">
-                    <h2 id="page-title">ダッシュボード</h2>
-                    <p id="page-subtitle" class="page-subtitle">支出サマリー</p>
-                </div>
-            </div>
-            <div class="topbar-right">
-                <button class="btn btn-primary btn-glow" id="btn-upload">
-                    <span class="btn-icon-left">📷</span>
-                    <span class="btn-text">レシートを撮影</span>
-                </button>
-                <div class="month-selector">
-                    <button class="btn btn-icon" id="prev-month" aria-label="前月">◀</button>
-                    <span id="current-month">2026年8月</span>
-                    <button class="btn btn-icon" id="next-month" aria-label="次月">▶</button>
-                </div>
-            </div>
-        </header>
-
-        <!-- ===== Dashboard Page ===== -->
-        <section id="page-dashboard" class="page active">
-            <div class="kpi-grid">
-                <div class="kpi-card" data-animate="1">
-                    <div class="kpi-icon-wrap"><span class="kpi-icon">💰</span></div>
-                    <div class="kpi-info">
-                        <p class="kpi-label">今月の支出</p>
-                        <p class="kpi-value" id="kpi-total" data-value="0">¥0</p>
-                        <p class="kpi-change" id="kpi-total-change">データなし</p>
-                    </div>
-                </div>
-                <div class="kpi-card" data-animate="2">
-                    <div class="kpi-icon-wrap"><span class="kpi-icon">🧾</span></div>
-                    <div class="kpi-info">
-                        <p class="kpi-label">レシート数</p>
-                        <p class="kpi-value" id="kpi-receipts" data-value="0">0枚</p>
-                        <p class="kpi-change" id="kpi-receipts-change">今月の記録</p>
-                    </div>
-                </div>
-                <div class="kpi-card" data-animate="3">
-                    <div class="kpi-icon-wrap"><span class="kpi-icon">🏷️</span></div>
-                    <div class="kpi-info">
-                        <p class="kpi-label">購入品目</p>
-                        <p class="kpi-value" id="kpi-items" data-value="0">0点</p>
-                        <p class="kpi-change" id="kpi-items-change">名寄せ済み</p>
-                    </div>
-                </div>
-                <div class="kpi-card" data-animate="4">
-                    <div class="kpi-icon-wrap"><span class="kpi-icon">📉</span></div>
-                    <div class="kpi-info">
-                        <p class="kpi-label">価格上昇率</p>
-                        <p class="kpi-value" id="kpi-inflation" data-value="0">--</p>
-                        <p class="kpi-change" id="kpi-inflation-change">前年同月比</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="chart-grid">
-                <div class="card glass" data-animate="5">
-                    <div class="card-header">
-                        <h3>カテゴリ別支出</h3>
-                        <span class="badge">今月</span>
-                    </div>
-                    <div class="chart-container" id="category-chart-container">
-                        <canvas id="category-chart" role="img" aria-label="カテゴリ別支出グラフ"></canvas>
-                    </div>
-                </div>
-                <div class="card glass" data-animate="6">
-                    <div class="card-header">
-                        <h3>月次支出推移</h3>
-                        <span class="badge">6ヶ月</span>
-                    </div>
-                    <div class="chart-container" id="monthly-chart-container">
-                        <canvas id="monthly-chart" role="img" aria-label="月次支出推移グラフ"></canvas>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card glass" data-animate="7">
-                <div class="card-header">
-                    <h3>最近のレシート</h3>
-                    <a href="#" class="link" data-page-link="receipts">すべて見る →</a>
-                </div>
-                <div id="recent-receipts-container">
-                    <div class="table-container">
-                        <table class="data-table" id="recent-receipts-table">
-                            <thead>
-                                <tr>
-                                    <th class="recent-col-date">日付</th>
-                                    <th class="recent-col-store">店舗</th>
-                                    <th class="recent-col-items">品目数</th>
-                                    <th class="recent-col-total">合計金額</th>
-                                    <th class="recent-col-status">ステータス</th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ===== Receipts Page ===== -->
-        <section id="page-receipts" class="page">
-            <div class="card glass">
-                <div class="card-header">
-                    <h3>レシート一覧</h3>
-                    <div class="filter-bar">
-                        <input type="text" class="form-input search-input" placeholder="店舗名で検索..." id="receipt-search">
-                        <select class="form-input select-input" id="receipt-filter">
-                            <option value="all">すべて</option>
-                            <option value="validated">検証済み</option>
-                            <option value="review">要確認</option>
-                        </select>
-                    </div>
-                </div>
-                <div id="receipts-container">
-                    <div class="table-container">
-                        <table class="data-table" id="receipts-table">
-                            <thead>
-                                <tr>
-                                    <th class="receipt-col-date">日付</th>
-                                    <th class="receipt-col-store">店舗</th>
-                                    <th class="receipt-col-items">品目数</th>
-                                    <th class="receipt-col-total">合計金額</th>
-                                    <th class="receipt-col-confidence">信頼度</th>
-                                    <th class="receipt-col-status">ステータス</th>
-                                    <th class="receipt-col-action">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ===== Items Page ===== -->
-        <section id="page-items" class="page">
-            <div class="card glass">
-                <div class="card-header">
-                    <h3>商品マスタ</h3>
-                    <div class="filter-bar">
-                        <input type="text" class="form-input search-input" placeholder="商品名で検索..." id="item-search">
-                        <select class="form-input select-input" id="item-category-filter">
-                            <option value="all">全カテゴリ</option>
-                            <option value="食費">食費</option>
-                            <option value="日用品">日用品</option>
-                            <option value="衛生用品">衛生用品</option>
-                            <option value="交際費">交際費</option>
-                            <option value="その他">その他</option>
-                        </select>
-                    </div>
-                </div>
-                <div id="items-container">
-                    <div class="table-container">
-                        <table class="data-table" id="items-table">
-                            <thead>
-                                <tr>
-                                    <th>商品名</th>
-                                    <th>カテゴリ</th>
-                                    <th>表記揺れ数</th>
-                                    <th>平均価格</th>
-                                    <th>購入回数</th>
-                                    <th>操作</th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ===== Trends Page ===== -->
-        <section id="page-trends" class="page">
-            <div class="card glass">
-                <div class="card-header">
-                    <h3>商品の価格推移</h3>
-                    <div class="filter-bar">
-                        <select class="form-input select-input" id="trend-item-select">
-                            <option value="">商品を選択...</option>
-                        </select>
-                    </div>
-                </div>
-                <div id="trends-chart-container">
-                    <div class="chart-container large">
-                        <canvas id="price-trend-chart" role="img" aria-label="商品価格推移グラフ"></canvas>
-                    </div>
-                </div>
-                <div class="trend-stats" id="trend-stats"></div>
-            </div>
-        </section>
-
-        <!-- ===== Settings Page ===== -->
-        <section id="page-settings" class="page">
-            <div class="settings-grid settings-grid-single">
-                <div class="card glass">
-                    <div class="card-header"><h3>カテゴリ設定</h3></div>
-                    <div class="settings-list" id="category-settings"></div>
-                </div>
-            </div>
-            <div class="card glass household-billing-card" id="household-billing-card" hidden>
-                <div class="card-header billing-card-header">
-                    <div>
-                        <p class="settings-eyebrow">MONTHLY USAGE</p>
-                        <h3>利用料金と未精算残高</h3>
-                    </div>
-                    <input class="form-input billing-month-input" id="billing-period" type="month" aria-label="利用料金の対象月">
-                </div>
-                <div class="billing-hero">
-                    <div>
-                        <p class="billing-hero-label">選択月の任意精算目安</p>
-                        <p class="billing-hero-value" id="billing-payment-amount">¥0</p>
-                        <p class="billing-hero-note">概算原価 ＋ 運営協力分100%（支払いは任意・合計は1円単位へ切り上げ）</p>
-                    </div>
-                    <div class="billing-cost-pair">
-                        <span>概算原価<strong id="billing-base-cost">¥0</strong></span>
-                        <span>運営協力分<strong id="billing-service-fee">¥0</strong></span>
-                    </div>
-                </div>
-                <div class="billing-balance-summary">
-                    <div>
-                        <span>累積未精算残高</span>
-                        <strong id="billing-outstanding-balance">¥0</strong>
-                    </div>
-                    <div>
-                        <span>これまでの利用料金合計</span>
-                        <strong id="billing-total-charges">¥0</strong>
-                    </div>
-                </div>
-                <div class="billing-limit-panel">
-                    <div class="billing-limit-copy">
-                        <span id="billing-limit-label">累積利用上限 ¥0</span>
-                        <span id="billing-limit-remaining">残り ¥0</span>
-                    </div>
-                    <div class="billing-progress"><span id="billing-limit-progress"></span></div>
-                    <p class="settings-help" id="billing-limit-message">利用状況を読み込み中...</p>
-                </div>
-                <div class="billing-breakdown">
-                    <div><span>AI / OpenRouter</span><strong id="billing-cost-ai">¥0</strong></div>
-                    <div><span>Cloud Run</span><strong id="billing-cost-run">¥0</strong></div>
-                    <div><span>Firestore</span><strong id="billing-cost-firestore">¥0</strong></div>
-                    <div><span>画像ストレージ</span><strong id="billing-cost-storage">¥0</strong></div>
-                </div>
-                <div class="billing-usage-chips" id="billing-usage-chips"></div>
-                <div class="paypay-panel" id="paypay-panel">
-                    <div class="paypay-copy">
-                        <span class="paypay-mark">P</span>
-                        <div><strong>PayPayで友人間の任意精算</strong><p id="paypay-recipient">支払先を確認中...</p></div>
-                    </div>
-                    <img id="paypay-qr-image" class="paypay-qr-image" alt="PayPay支払いQRコード" hidden>
-                    <p class="settings-help" id="paypay-qr-empty">QRコードは管理者が登録後に表示されます。</p>
-                </div>
-                <p class="billing-estimate-note" id="billing-estimate-note"></p>
-            </div>
-
-            <div class="card glass household-access-card">
-                <div class="card-header">
-                    <div>
-                        <p class="settings-eyebrow">HOUSEHOLD ACCESS</p>
-                        <h3>家計簿とメンバー</h3>
-                    </div>
-                    <span class="badge" id="household-role-badge">MEMBER</span>
-                </div>
-                <div class="form-group household-switcher-wrap">
-                    <label for="household-selector">表示する家計簿</label>
-                    <select class="form-input select-input" id="household-selector"></select>
-                </div>
-                <form class="household-invite-form" id="household-invite-form">
-                    <div class="form-group">
-                        <label for="household-invite-email">Googleアカウントのメールアドレス</label>
-                        <div class="inline-form-row">
-                            <input class="form-input" id="household-invite-email" type="email" autocomplete="email" placeholder="family@example.com" required>
-                            <button class="btn btn-primary" type="submit">招待する</button>
-                        </div>
-                    </div>
-                    <p class="settings-help">招待された人は、管理者による初回利用承認後、この家計簿を選択できます。</p>
-                </form>
-                <div class="access-list" id="household-members-list">
-                    <p class="settings-help">メンバー情報を読み込み中...</p>
-                </div>
-            </div>
-
-            <div class="card glass platform-admin-card" id="platform-admin-card" hidden>
-                <div class="card-header">
-                    <div>
-                        <p class="settings-eyebrow">PLATFORM CONTROL</p>
-                        <h3>利用申請とアカウント管理</h3>
-                    </div>
-                    <span class="badge admin-request-badge" id="admin-request-count">0 PENDING</span>
-                </div>
-                <p class="data-safety-copy">初回ログインの申請を承認し、必要に応じて利用者を即時BAN・解除できます。</p>
-                <h4 class="access-section-title">承認待ち</h4>
-                <div class="access-list" id="admin-signup-requests"></div>
-                <h4 class="access-section-title">利用アカウント</h4>
-                <div class="access-list" id="admin-user-list"></div>
-            </div>
-
-            <div class="card glass platform-billing-card" id="platform-billing-card" hidden>
-                <div class="card-header billing-card-header">
-                    <div>
-                        <p class="settings-eyebrow">COST CONTROL</p>
-                        <h3>全家計簿の料金・残高・利用上限</h3>
-                    </div>
-                    <input class="form-input billing-month-input" id="admin-billing-period" type="month" aria-label="管理料金の対象月">
-                </div>
-                <div class="admin-billing-total">
-                    <span>選択月の概算原価<strong id="admin-billing-base-total">¥0</strong></span>
-                    <span>選択月の精算目安<strong id="admin-billing-payment-total">¥0</strong></span>
-                    <span>全家計簿の未精算残高<strong id="admin-billing-outstanding-total">¥0</strong></span>
-                </div>
-                <form class="billing-qr-upload" id="billing-qr-upload-form">
-                    <div>
-                        <strong>PayPay QRコード（個人用可）</strong>
-                        <p class="settings-help">非公開Cloud Storageへ保存され、家計簿オーナーだけに表示されます。友人同士で合意した任意精算に使用してください。</p>
-                    </div>
-                    <label class="btn btn-secondary" for="billing-qr-file">QR画像を選択</label>
-                    <input id="billing-qr-file" type="file" accept="image/*" hidden>
-                    <button class="btn btn-primary" type="submit">QRを登録</button>
-                </form>
-                <div class="admin-billing-list" id="admin-billing-list">
-                    <p class="settings-help">料金情報を読み込み中...</p>
-                </div>
-            </div>
-
-            <div class="card glass data-safety-card">
-                <div class="card-header"><h3>選択中の家計簿Data</h3><span class="badge">CLOUD SYNC</span></div>
-                <p class="data-safety-copy">選択中の家計簿メンバーだけが、Google Cloud上のレシート・商品情報・画像を利用できます。他の家計簿とは完全に分離されます。</p>
-                <div class="data-safety-actions">
-                    <button class="btn btn-secondary" id="btn-export-data" type="button">バックアップを書き出す</button>
-                    <button class="btn btn-primary" id="btn-sync-data" type="button">今すぐ同期</button>
-                </div>
-                <p class="storage-status" id="storage-status">Google Cloud共有データを確認中...</p>
-            </div>
-        </section>
-    </main>
+    </div>
 
     <!-- ===== Receipt Upload & Review Modal ===== -->
     <div class="modal-overlay" id="receipt-modal">
-        <div class="modal modal-review">
+        <div class="modal modal-review" role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div class="modal-header">
                 <h3 id="modal-title">レシートをアップロード</h3>
-                <button class="btn btn-icon modal-close" id="close-modal" aria-label="閉じる">✕</button>
+                <button class="btn btn-icon modal-close" id="close-modal" type="button" aria-label="閉じる"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
             </div>
 
             <!-- Step Indicator -->
@@ -451,15 +554,15 @@
                 <!-- Step 1: Upload -->
                 <div class="modal-step active" id="step-upload">
                     <div class="upload-zone" id="upload-zone">
-                        <div class="upload-icon-large">📷</div>
+                        <div class="upload-icon-large"><svg class="icon" aria-hidden="true"><use href="#i-receipt"/></svg></div>
                         <p class="upload-title">レシート画像を追加</p>
                         <p class="upload-hint">撮影するか、写真ライブラリから選んでください。追加後すぐには解析しません。</p>
                         <div class="upload-source-actions" aria-label="画像の追加方法">
                             <button class="btn btn-secondary upload-source-btn" id="btn-open-camera" type="button">
-                                <span aria-hidden="true">📷</span><span id="camera-action-label">カメラで撮影</span>
+                                <svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg><span id="camera-action-label">カメラで撮影</span>
                             </button>
                             <button class="btn btn-secondary upload-source-btn" id="btn-select-gallery" type="button">
-                                <span aria-hidden="true">🖼️</span><span id="gallery-action-label">写真から選ぶ</span>
+                                <svg class="icon" aria-hidden="true"><use href="#i-image"/></svg><span id="gallery-action-label">写真から選ぶ</span>
                             </button>
                         </div>
                         <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
@@ -476,7 +579,7 @@
                             <div class="selected-file-list" id="selected-file-list" role="list"></div>
                         </section>
 
-                        <p class="upload-note">📱 合計10枚まで追加できます。撮影後も続けて撮るか、写真から追加できます。1枚に複数レシートが写っていても解析します。</p>
+                        <p class="upload-note">合計10枚まで追加できます。撮影後も続けて撮るか、写真から追加できます。1枚に複数レシートが写っていても解析します。</p>
                     </div>
                 </div>
 
@@ -489,7 +592,7 @@
                         </div>
                         <div class="analysis-steps">
                             <div class="analysis-step-item" id="a-step-ocr">
-                                <div class="a-step-icon">📤</div>
+                                <div class="a-step-icon"><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg></div>
                                 <div class="a-step-info">
                                     <p class="a-step-label">画像を送信</p>
                                     <div class="progress-bar"><div class="progress-fill" id="ocr-progress"></div></div>
@@ -497,7 +600,7 @@
                                 <span class="a-step-status">待機中</span>
                             </div>
                             <div class="analysis-step-item" id="a-step-parse">
-                                <div class="a-step-icon">🤖</div>
+                                <div class="a-step-icon"><svg class="icon" aria-hidden="true"><use href="#i-sparkle"/></svg></div>
                                 <div class="a-step-info">
                                     <p class="a-step-label">AI一括解析</p>
                                     <div class="progress-bar"><div class="progress-fill" id="parse-progress"></div></div>
@@ -505,7 +608,7 @@
                                 <span class="a-step-status">待機中</span>
                             </div>
                             <div class="analysis-step-item" id="a-step-classify">
-                                <div class="a-step-icon">✨</div>
+                                <div class="a-step-icon"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></div>
                                 <div class="a-step-info">
                                     <p class="a-step-label">結果を準備</p>
                                     <div class="progress-bar"><div class="progress-fill" id="classify-progress"></div></div>
@@ -529,7 +632,7 @@
                             <div class="review-source-body" id="review-source-body">
                                 <button class="review-source-frame" id="review-source-open" type="button" aria-label="レシート画像を拡大表示">
                                     <img id="review-source-image" alt="" draggable="false">
-                                    <span class="review-source-zoom-hint" aria-hidden="true">🔍 タップで拡大</span>
+                                    <span class="review-source-zoom-hint" aria-hidden="true">タップで拡大</span>
                                 </button>
                                 <p class="review-source-empty" id="review-source-empty" hidden></p>
                                 <p class="review-source-note" id="review-source-note" hidden></p>
@@ -604,7 +707,7 @@
                 <button class="review-footer-diff" id="review-footer-diff" type="button" hidden></button>
                 <button class="btn btn-secondary" id="btn-modal-cancel" type="button">キャンセル</button>
                 <button class="btn btn-primary upload-analyze-btn" id="btn-analyze-files" type="button" disabled>選択した画像をまとめて解析</button>
-                <button class="btn btn-primary btn-glow" id="btn-modal-approve" type="button" style="display:none;">✓ 承認して登録</button>
+                <button class="btn btn-primary" id="btn-modal-approve" type="button" style="display:none;">承認して登録</button>
             </div>
         </div>
     </div>
@@ -617,7 +720,7 @@
                 <button class="btn btn-icon" type="button" data-lightbox-zoom="out" aria-label="縮小">－</button>
                 <button class="btn btn-icon image-lightbox-reset" type="button" data-lightbox-zoom="reset" aria-label="全体表示に戻す">全体</button>
                 <button class="btn btn-icon" type="button" data-lightbox-zoom="in" aria-label="拡大">＋</button>
-                <button class="btn btn-icon" id="image-lightbox-close" type="button" aria-label="拡大表示を閉じる">✕</button>
+                <button class="btn btn-icon" id="image-lightbox-close" type="button" aria-label="拡大表示を閉じる"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
             </div>
         </div>
         <div class="image-lightbox-stage" id="image-lightbox-stage">
@@ -626,27 +729,87 @@
         <p class="image-lightbox-hint">ピンチ・ダブルタップ・ホイールで拡大、ドラッグで移動</p>
     </div>
 
-    <!-- Toast Notification Container -->
-    <!-- ===== Record Detail Modal ===== -->
-    <div class="modal-overlay" id="detail-modal" aria-hidden="true">
-        <div class="modal modal-detail" role="dialog" aria-modal="true" aria-labelledby="detail-modal-title">
+
+    <!-- ===== 手入力 ===== -->
+    <div class="modal-overlay" id="entry-modal" aria-hidden="true">
+        <div class="modal modal-entry" role="dialog" aria-modal="true" aria-labelledby="entry-modal-title">
             <div class="modal-header">
-                <h3 id="detail-modal-title">詳細</h3>
-                <button class="btn btn-icon modal-close" id="detail-modal-close" aria-label="閉じる">✕</button>
+                <h3 id="entry-modal-title">手入力で記録</h3>
+                <button class="btn btn-icon modal-close" id="entry-close" type="button" aria-label="閉じる">
+                    <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+                </button>
             </div>
-            <div class="modal-body detail-modal-body" id="detail-modal-body"></div>
+            <form class="modal-body entry-form" id="entry-form" novalidate>
+                <label class="amount-field" for="entry-amount">
+                    <span class="field-label">金額</span>
+                    <span class="amount-input">
+                        <span aria-hidden="true">¥</span>
+                        <input class="form-input" id="entry-amount" type="text" inputmode="numeric" autocomplete="off" placeholder="0" required>
+                    </span>
+                </label>
+                <fieldset class="field">
+                    <legend class="field-label">カテゴリ</legend>
+                    <div class="category-chips" id="entry-category-chips" role="radiogroup" aria-label="カテゴリ"></div>
+                </fieldset>
+                <label class="field">
+                    <span class="field-label">内容</span>
+                    <input class="form-input" id="entry-name" list="entry-name-suggestions" maxlength="100" placeholder="例: ランチ、家賃、動画配信サービス" autocomplete="off">
+                    <datalist id="entry-name-suggestions"></datalist>
+                </label>
+                <div class="field-row">
+                    <label class="field">
+                        <span class="field-label">日付</span>
+                        <input class="form-input" id="entry-date" type="date" required>
+                    </label>
+                    <label class="field">
+                        <span class="field-label">お店・支払先</span>
+                        <input class="form-input" id="entry-store" maxlength="100" placeholder="任意" autocomplete="off">
+                    </label>
+                </div>
+                <label class="field">
+                    <span class="field-label">メモ</span>
+                    <input class="form-input" id="entry-memo" maxlength="200" placeholder="任意" autocomplete="off">
+                </label>
+                <label class="switch-field" id="entry-repeat-field">
+                    <input type="checkbox" id="entry-repeat">
+                    <span class="switch-track" aria-hidden="true"></span>
+                    <span class="switch-copy"><strong>毎月の固定費にする</strong><span>来月以降も同じ金額で自動計上します</span></span>
+                </label>
+                <p class="field-help entry-recurring-note" id="entry-recurring-note" hidden></p>
+            </form>
             <div class="modal-footer">
-                <button class="btn btn-secondary" id="detail-modal-footer-close">閉じる</button>
+                <button class="btn btn-ghost btn-danger-text" id="entry-delete" type="button" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg><span>削除</span>
+                </button>
+                <button class="btn btn-secondary" id="entry-cancel" type="button">キャンセル</button>
+                <button class="btn btn-primary" id="entry-save" type="submit" form="entry-form">記録する</button>
             </div>
         </div>
     </div>
 
-    <div class="toast-container" id="toast-container"></div>
+    <!-- ===== 詳細・編集シート ===== -->
+    <div class="modal-overlay" id="detail-modal" aria-hidden="true">
+        <div class="modal modal-detail" role="dialog" aria-modal="true" aria-labelledby="detail-modal-title">
+            <div class="modal-header">
+                <h3 id="detail-modal-title">詳細</h3>
+                <button class="btn btn-icon modal-close" id="detail-modal-close" type="button" aria-label="閉じる">
+                    <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+                </button>
+            </div>
+            <div class="modal-body detail-modal-body" id="detail-modal-body"></div>
+            <div class="modal-footer" id="detail-modal-footer">
+                <button class="btn btn-secondary" id="detail-modal-footer-close" type="button">閉じる</button>
+            </div>
+        </div>
+    </div>
 
-    <script src="js/auth.js?v=20260813-capture1"></script>
-    <script src="js/shared-data.js"></script>
-    <script src="js/app.js?v=20261023-review1"></script>
-    <script src="js/access-management.js"></script>
-    <script src="js/billing.js?v=20260813-balance1"></script>
+    <div class="toast-container" id="toast-container" aria-live="polite"></div>
+
+    <script src="js/auth.js?v=20261105-ux1"></script>
+    <script src="js/shared-data.js?v=20261105-ux1"></script>
+    <script src="js/household-settings.js?v=20261105-ux1"></script>
+    <script src="js/app.js?v=20261105-ux1"></script>
+    <script src="js/access-management.js?v=20261105-ux1"></script>
+    <script src="js/billing.js?v=20261105-ux1"></script>
 </body>
 </html>

@@ -1,36 +1,125 @@
-const LEGACY_STORAGE_KEY = 'kakeibo.appData.v1';
-const SHARED_SYNC_STALE_MS = 15000;
+'use strict';
 
-// ===== アプリデータ（永続保存対応） =====
+const LEGACY_STORAGE_KEY = 'kakeibo.appData.v1';
+const THEME_STORAGE_KEY = 'kakeibo.theme.v1';
+const SHARED_SYNC_STALE_MS = 15000;
+const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+
+// ===== アプリデータ =====
 const appData = {
-    receipts: [],
-    categories: [
-        { name: '食費', color: '#D1AD67' },
-        { name: '日用品', color: '#68D9C1' },
-        { name: '衛生用品', color: '#A78BFA' },
-        { name: '交際費', color: '#F28B92' },
-        { name: 'その他', color: '#8893A5' }
-    ]
+    receipts: []
 };
 
-// ===== 状態管理 =====
+// ===== 状態 =====
 let currentPage = 'dashboard';
-let currentMonth = new Date();
+let currentMonth = startOfMonth(new Date());
 let charts = {};
 let reviewItems = [];
 let lastSharedSyncAt = 0;
 let sharedSyncPromise = null;
+let sharedSyncFailed = false;
 let detailImageObjectUrl = '';
+let analysisTab = 'trend';
+let trendRange = 6;
+let historyFilter = 'all';
 
-if (typeof Chart !== 'undefined') {
-    Chart.defaults.color = '#AEB5C3';
-    Chart.defaults.font.family = "Inter, Noto Sans JP, sans-serif";
-    Chart.defaults.font.size = 11;
-}
+const PAGE_META = {
+    dashboard: { title: 'ホーム', hash: 'home', month: true },
+    receipts: { title: '履歴', hash: 'history', month: true },
+    analysis: { title: '分析', hash: 'analysis', month: true },
+    settings: { title: '設定', hash: 'settings', month: false }
+};
 
 // ===== ユーティリティ =====
+function startOfMonth(date) {
+    return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
 function formatCurrency(amount) {
-    return '¥' + amount.toLocaleString('ja-JP');
+    const value = Math.round(Number(amount) || 0);
+    return (value < 0 ? '−¥' : '¥') + Math.abs(value).toLocaleString('ja-JP');
+}
+
+function formatSignedCurrency(amount) {
+    const value = Math.round(Number(amount) || 0);
+    if (value === 0) return '±¥0';
+    return (value > 0 ? '+¥' : '−¥') + Math.abs(value).toLocaleString('ja-JP');
+}
+
+function formatCompactYen(value) {
+    const number = Math.abs(Number(value) || 0);
+    if (number >= 10000) return `${(number / 10000).toFixed(number % 10000 === 0 ? 0 : 1)}万`;
+    if (number >= 1000) return `${(number / 1000).toFixed(number % 1000 === 0 ? 0 : 1)}千`;
+    return String(Math.round(number));
+}
+
+function formatPercent(ratio, { signed = true } = {}) {
+    const value = Number(ratio) * 100;
+    if (!Number.isFinite(value)) return '—';
+    const rounded = Math.abs(value) >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
+    if (!signed) return `${rounded}%`;
+    if (rounded === 0) return '±0%';
+    return `${rounded > 0 ? '+' : '−'}${Math.abs(rounded)}%`;
+}
+
+// 日付だけの文字列はUTCではなく端末のローカル日付として扱う。
+function parseDate(value) {
+    if (value instanceof Date) return value;
+    const text = String(value || '');
+    const dateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnly) return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 12);
+    const parsed = new Date(text);
+    return parsed;
+}
+
+function isValidDate(date) {
+    return date instanceof Date && !Number.isNaN(date.getTime());
+}
+
+function formatDate(dateStr) {
+    const d = parseDate(dateStr);
+    if (!isValidDate(d)) return '—';
+    return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function formatMonthDay(dateStr, { weekday = false } = {}) {
+    const d = parseDate(dateStr);
+    if (!isValidDate(d)) return '—';
+    return `${d.getMonth() + 1}月${d.getDate()}日${weekday ? `（${WEEKDAYS[d.getDay()]}）` : ''}`;
+}
+
+function formatMonthLabel(date) {
+    return `${date.getFullYear()}年${date.getMonth() + 1}月`;
+}
+
+function monthKey(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function dayKey(date) {
+    return `${monthKey(date)}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function daysInMonth(date) {
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+function isSameMonth(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+}
+
+function toInputDate(date) {
+    return dayKey(date);
+}
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[char]));
+}
+
+function icon(name, className = '') {
+    return `<svg class="icon ${className}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 }
 
 function getItemLineTotal(item) {
@@ -41,29 +130,66 @@ function getItemLineTotal(item) {
     return (Number(item?.price) || 0) * quantity;
 }
 
-function formatDate(dateStr) {
-    const d = new Date(dateStr);
-    if (Number.isNaN(d.getTime())) return '-';
-    const yy = String(d.getFullYear()).slice(-2);
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yy}/${mm}/${dd}`;
-}
 function getStatusBadge(status) {
-    const labels = { 'validated': '検証済み', 'review': '要確認', 'extracted': '抽出済み' };
-    return `<span class="status-badge status-${status}">${labels[status] || status}</span>`;
+    const labels = { validated: '確認済み', review: '要確認', extracted: '読み取り済み', manual: '手入力', recurring: '固定費' };
+    return `<span class="status-badge status-${escapeHtml(status)}">${escapeHtml(labels[status] || status)}</span>`;
 }
 
 function generateId() {
-    return Date.now() + Math.random().toString(36).substr(2, 9);
+    return Date.now() + Math.random().toString(36).slice(2, 11);
 }
 
-function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, char => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[char]));
+function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+function categoryNames() {
+    return window.KakeiboSettings?.categoryNames?.() || ['その他'];
+}
+
+function categoryDot(name) {
+    return `<span class="dot" style="--dot:${window.KakeiboSettings?.colorVar?.(name) || 'var(--gray)'}" aria-hidden="true"></span>`;
+}
+
+// ===== 記録の種類 =====
+function entryKind(receipt) {
+    if (receipt?.virtual || receipt?.entry_type === 'recurring') return 'recurring';
+    if (receipt?.entry_type === 'manual' || receipt?.status === 'manual') return 'manual';
+    return 'receipt';
+}
+
+function isLinkedToRecurring(receipt) {
+    return Boolean(window.KakeiboSettings?.linkedRecurringId?.(receipt));
+}
+
+function entryTotal(receipt) {
+    return Number(receipt?.total) || 0;
+}
+
+function categoryTotals(receipt) {
+    const totals = {};
+    (receipt?.items || []).forEach(item => {
+        const category = item.category || 'その他';
+        totals[category] = (totals[category] || 0) + getItemLineTotal(item);
+    });
+    return totals;
+}
+
+function dominantCategory(receipt) {
+    const totals = Object.entries(categoryTotals(receipt));
+    if (!totals.length) return 'その他';
+    return totals.sort((a, b) => b[1] - a[1])[0][0];
+}
+
+function itemSummary(receipt, limit = 2) {
+    const items = (receipt?.items || []).filter(item => item.name);
+    if (!items.length) return '';
+    if (entryKind(receipt) !== 'receipt' && items.length === 1) return receipt.memo || '';
+    const names = items.slice(0, limit).map(item => item.name).join('、');
+    return items.length > limit ? `${names} ほか${items.length - limit}点` : names;
+}
+
+// ===== データ整形 =====
 function normalizePersistedItem(item) {
     if (!item || typeof item !== 'object') return null;
     const quantity = Math.max(1, Number(item.quantity) || 1);
@@ -74,7 +200,7 @@ function normalizePersistedItem(item) {
         : Math.max(0, Number(rawLineTotal) || 0);
     return {
         ...item,
-        name: String(item.name || '未分類商品'),
+        name: String(item.name || '未分類の品目'),
         price,
         quantity,
         category: String(item.category || 'その他'),
@@ -93,21 +219,44 @@ function normalizePersistedReceipt(receipt, index) {
         ...receipt,
         id: receipt.id ?? `restored-${Date.now()}-${index}`,
         date: receipt.date || new Date().toISOString(),
-        store: String(receipt.store || '店舗未設定'),
+        store: String(receipt.store || '店名なし'),
         items,
         total,
+        memo: String(receipt.memo || ''),
         confidence: Math.min(1, Math.max(0, Number(receipt.confidence) || 0)),
         status: receipt.status || 'validated'
     };
 }
 
+function receiptsInMonth(date) {
+    return appData.receipts.filter(receipt => {
+        const d = parseDate(receipt.date);
+        return isValidDate(d) && isSameMonth(d, date);
+    });
+}
+
+// 実際の記録に、その月の固定費（予定を含む）を加えたもの。
+function getMonthEntries(date = currentMonth) {
+    const actual = receiptsInMonth(date);
+    const recurring = window.KakeiboSettings?.recurringForMonth?.(date.getFullYear(), date.getMonth(), actual) || { entries: [], pending: [] };
+    return { actual, virtual: recurring.entries, pending: recurring.pending, all: [...actual, ...recurring.entries] };
+}
+
+function getMonthReceipts() {
+    return getMonthEntries(currentMonth).all;
+}
+
+function sortByDateDesc(entries) {
+    return [...entries].sort((a, b) => parseDate(b.date) - parseDate(a.date));
+}
+
 function makeDataSnapshot() {
     return {
-        schemaVersion: 2,
+        schemaVersion: 3,
         source: 'google-cloud-firestore',
         exportedAt: new Date().toISOString(),
         receipts: appData.receipts,
-        categories: appData.categories
+        settings: window.KakeiboSettings?.get?.() || null
     };
 }
 
@@ -128,6 +277,10 @@ function clearLegacyLocalData() {
     }
 }
 
+function householdLabel() {
+    return window.KakeiboAuth?.getUser?.()?.household?.name || '';
+}
+
 function updateStorageStatus(message = '') {
     const status = document.getElementById('storage-status');
     if (!status) return;
@@ -136,16 +289,32 @@ function updateStorageStatus(message = '') {
         return;
     }
     if (!lastSharedSyncAt) {
-        status.textContent = 'Google Cloud共有データを読み込み中...';
+        status.textContent = '共有データを読み込み中...';
         return;
     }
     const savedAt = new Date(lastSharedSyncAt).toLocaleString('ja-JP');
-    const householdName = window.KakeiboAuth?.getUser?.()?.household?.name || '選択中の家計簿';
-    status.textContent = `${householdName}：${appData.receipts.length}件 / 最終同期 ${savedAt}`;
+    status.textContent = `${householdLabel() || '選択中の家計簿'}：${appData.receipts.length}件の記録 · 最終同期 ${savedAt}`;
+}
+
+function updateSyncBanner() {
+    const banner = document.getElementById('sync-banner');
+    if (!banner) return;
+    const settingsMode = window.KakeiboSettings?.mode?.();
+    let message = '';
+    let tone = 'info';
+    if (sharedSyncFailed) {
+        message = '最新の記録を読み込めませんでした。通信状態を確認して、設定の「今すぐ同期」を押してください。';
+        tone = 'warning';
+    } else if (settingsMode === 'local') {
+        message = '予算・カテゴリ・固定費は、サーバー更新まではこの端末だけに保存されます。';
+    }
+    banner.hidden = !message;
+    banner.dataset.tone = tone;
+    banner.innerHTML = message ? `${icon(tone === 'warning' ? 'alert' : 'sync')}<span>${escapeHtml(message)}</span>` : '';
 }
 
 function renderCurrentPage() {
-    navigateTo(currentPage);
+    navigateTo(currentPage, { updateHash: false });
 }
 
 async function loadSharedData({ announce = false, force = false } = {}) {
@@ -153,24 +322,32 @@ async function loadSharedData({ announce = false, force = false } = {}) {
     if (window.KakeiboAuth?.enabled && !window.KakeiboAuth.getToken()) return false;
     if (sharedSyncPromise) return sharedSyncPromise;
 
-    updateStorageStatus('Google Cloud共有データを同期中...');
+    updateStorageStatus('共有データを同期中...');
+    document.body.classList.add('is-syncing');
     sharedSyncPromise = (async () => {
         try {
-            const payload = await window.KakeiboShared.requestJson('/receipts');
+            const [payload] = await Promise.all([
+                window.KakeiboShared.requestJson('/receipts'),
+                window.KakeiboSettings?.load?.({ force }) || Promise.resolve()
+            ]);
             if (!applySharedData(payload)) throw new Error('共有データの形式が不正です。');
             clearLegacyLocalData();
             lastSharedSyncAt = Date.now();
+            sharedSyncFailed = false;
             updateStorageStatus();
             renderCurrentPage();
-            if (announce) showToast(`${appData.receipts.length}件の家計簿Dataを同期しました`, '☁️');
+            if (announce) showToast(`${appData.receipts.length}件の記録を同期しました`, 'sync');
             return true;
         } catch (error) {
             console.error('共有データの同期に失敗しました。', error);
+            sharedSyncFailed = true;
             updateStorageStatus('共有データを同期できませんでした');
-            if (announce) showToast(error instanceof Error ? error.message : '共有データを同期できませんでした', '⚠️');
+            if (announce) showToast(error instanceof Error ? error.message : '共有データを同期できませんでした', 'alert');
             return false;
         } finally {
             sharedSyncPromise = null;
+            document.body.classList.remove('is-syncing');
+            updateSyncBanner();
         }
     })();
     return sharedSyncPromise;
@@ -185,851 +362,2175 @@ function refreshSharedDataIfStale() {
 function clearInMemoryData() {
     appData.receipts.splice(0, appData.receipts.length);
     lastSharedSyncAt = 0;
+    window.KakeiboSettings?.reset?.();
     renderCurrentPage();
     updateStorageStatus('ログインすると選択中の家計簿を読み込みます');
 }
 
-function downloadDataBackup() {
-    const blob = new Blob([JSON.stringify(makeDataSnapshot(), null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const date = new Date().toISOString().slice(0, 10);
-    link.href = url;
-    link.download = `kakeibo-cloud-backup-${date}.json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast('家計簿Dataのバックアップを書き出しました', '✓');
+// ===== トースト =====
+function showToast(message, iconName = 'check') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const known = ['check', 'alert', 'sync', 'trash', 'download', 'repeat'];
+    const legacy = { '✓': 'check', '✅': 'check', '⚠️': 'alert', '☁️': 'sync', 'ℹ️': 'sync' };
+    const name = known.includes(iconName) ? iconName : (legacy[iconName] || 'check');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${name === 'alert' ? 'warning' : 'default'}`;
+    toast.setAttribute('role', name === 'alert' ? 'alert' : 'status');
+    toast.innerHTML = `${icon(name)}<span></span>`;
+    toast.querySelector('span').textContent = String(message);
+    container.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 400);
+    }, name === 'alert' ? 5200 : 3200);
 }
 
-function initDataSafety() {
-    clearLegacyLocalData();
-    document.getElementById('btn-export-data')?.addEventListener('click', downloadDataBackup);
-    document.getElementById('btn-sync-data')?.addEventListener('click', () => loadSharedData({ announce: true, force: true }));
-    updateStorageStatus();
+// ===== モーダル共通（フォーカスとEscキー） =====
+const overlayStack = [];
+
+function openOverlay(element, { onClose, focus } = {}) {
+    if (!element) return;
+    const entry = { element, onClose, returnFocus: document.activeElement };
+    overlayStack.push(entry);
+    element.hidden = false;
+    element.classList.add('active');
+    element.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('has-overlay');
+    requestAnimationFrame(() => {
+        const target = (focus && element.querySelector(focus))
+            || element.querySelector('[autofocus]')
+            || element.querySelector('.modal-close, button, input, select, textarea');
+        target?.focus({ preventScroll: true });
+    });
 }
+
+function closeOverlay(element, { silent = false } = {}) {
+    const index = overlayStack.findIndex(entry => entry.element === element);
+    if (index < 0) {
+        element?.classList.remove('active');
+        return;
+    }
+    const wasTop = index === overlayStack.length - 1;
+    const [entry] = overlayStack.splice(index, 1);
+    element.classList.remove('active');
+    element.setAttribute('aria-hidden', 'true');
+    if (element.classList.contains('sheet-overlay')) element.hidden = true;
+    if (!overlayStack.length) document.body.classList.remove('has-overlay');
+    if (!silent && typeof entry.onClose === 'function') entry.onClose();
+    const back = entry.returnFocus;
+    if (wasTop && back && typeof back.focus === 'function' && document.contains(back)) back.focus({ preventScroll: true });
+}
+
+function topOverlay() {
+    return overlayStack[overlayStack.length - 1]?.element || null;
+}
+
+document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    const lightbox = document.getElementById('image-lightbox');
+    if (lightbox && !lightbox.hidden) return;
+    const top = topOverlay();
+    if (!top) return;
+    event.preventDefault();
+    if (top.id === 'receipt-modal') {
+        document.getElementById('close-modal')?.click();
+        return;
+    }
+    closeOverlay(top);
+});
+
+// ===== ページ切り替え =====
+function pageFromHash() {
+    const hash = window.location.hash.replace('#', '');
+    const found = Object.entries(PAGE_META).find(([, meta]) => meta.hash === hash);
+    return found ? found[0] : null;
+}
+
+function navigateTo(page, { updateHash = true, scrollTop = false } = {}) {
+    if (!PAGE_META[page]) page = 'dashboard';
+    const changed = page !== currentPage;
+    currentPage = page;
+
+    document.querySelectorAll('.nav-item').forEach(item => {
+        const active = item.dataset.page === page;
+        item.classList.toggle('active', active);
+        if (active) item.setAttribute('aria-current', 'page');
+        else item.removeAttribute('aria-current');
+    });
+    document.querySelectorAll('.page').forEach(section => {
+        section.classList.toggle('active', section.id === `page-${page}`);
+    });
+
+    const meta = PAGE_META[page];
+    document.getElementById('page-title').textContent = meta.title;
+    document.getElementById('page-subtitle').textContent = householdLabel() || '家計簿';
+    document.getElementById('month-selector').hidden = !meta.month;
+    document.title = `${meta.title} · 家計簿`;
+    if (updateHash && window.location.hash !== `#${meta.hash}`) {
+        history.replaceState(null, '', `#${meta.hash}`);
+    }
+    if (changed || scrollTop) window.scrollTo({ top: 0 });
+
+    if (page === 'dashboard') renderDashboard();
+    if (page === 'receipts') renderHistory();
+    if (page === 'analysis') renderAnalysis();
+    if (page === 'settings') renderSettings();
+}
+
+// ===== 月の切り替え =====
+function updateMonthLabel() {
+    const label = document.getElementById('current-month');
+    if (!label) return;
+    label.textContent = formatMonthLabel(currentMonth);
+    const isCurrent = isSameMonth(currentMonth, new Date());
+    label.classList.toggle('is-current', isCurrent);
+    label.setAttribute('aria-label', isCurrent ? `${formatMonthLabel(currentMonth)}（今月）` : `${formatMonthLabel(currentMonth)}。押すと今月に戻ります`);
+}
+
+function setMonth(date) {
+    currentMonth = startOfMonth(date);
+    updateMonthLabel();
+    renderCurrentPage();
+}
+
+function initMonthSelector() {
+    document.getElementById('prev-month').addEventListener('click', () => {
+        setMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+    });
+    document.getElementById('next-month').addEventListener('click', () => {
+        setMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+    });
+    document.getElementById('current-month').addEventListener('click', () => setMonth(new Date()));
+    updateMonthLabel();
+}
+
+// ===== グラフ共通 =====
+function chartTheme() {
+    return {
+        ink: cssVar('--ink'),
+        ink2: cssVar('--ink-2'),
+        muted: cssVar('--ink-3'),
+        grid: cssVar('--chart-grid'),
+        axis: cssVar('--chart-axis'),
+        surface: cssVar('--surface'),
+        accent: cssVar('--c1'),
+        tooltipBg: cssVar('--tooltip-bg'),
+        tooltipInk: cssVar('--tooltip-ink'),
+        font: cssVar('--font-sans') || 'system-ui, sans-serif'
+    };
+}
+
+function slotColor(slot) {
+    return cssVar(`--${slot}`) || cssVar('--gray');
+}
+
+function destroyChart(key) {
+    if (charts[key]) {
+        charts[key].destroy();
+        delete charts[key];
+    }
+}
+
+// 縦の補助線。指先やマウスの位置に最も近い日付へ吸着する。
+const crosshairPlugin = {
+    id: 'kakeiboCrosshair',
+    afterDatasetsDraw(chart) {
+        const active = chart.tooltip?.getActiveElements?.() || [];
+        if (!active.length) return;
+        const { ctx, chartArea } = chart;
+        const x = active[0].element.x;
+        ctx.save();
+        ctx.strokeStyle = chartTheme().axis;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
+        ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+        ctx.stroke();
+        ctx.restore();
+    }
+};
+
+function baseTooltip(theme) {
+    return {
+        backgroundColor: theme.tooltipBg,
+        titleColor: theme.tooltipInk,
+        bodyColor: theme.tooltipInk,
+        borderColor: theme.grid,
+        borderWidth: 1,
+        padding: 10,
+        cornerRadius: 8,
+        boxPadding: 4,
+        usePointStyle: true,
+        titleFont: { family: theme.font, size: 12, weight: '600' },
+        bodyFont: { family: theme.font, size: 12 }
+    };
+}
+
+function renderLegend(container, entries) {
+    if (!container) return;
+    container.innerHTML = entries.map(entry => `
+        <span class="legend-item">
+            <span class="legend-key legend-key-${entry.shape || 'rect'}" style="--key:${entry.color}"></span>
+            <span>${escapeHtml(entry.label)}</span>
+        </span>`).join('');
+}
+
+if (typeof Chart !== 'undefined') {
+    Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif';
+    Chart.defaults.font.size = 11;
+    Chart.defaults.animation.duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 350;
+}
+
+// ===== 空の状態 =====
+function emptyState({ iconName = 'receipt', title, description = '', action = '' }) {
+    return `
+        <div class="empty-state">
+            <span class="empty-state-icon">${icon(iconName)}</span>
+            <p class="empty-state-title">${escapeHtml(title)}</p>
+            ${description ? `<p class="empty-state-desc">${escapeHtml(description)}</p>` : ''}
+            ${action}
+        </div>`;
+}
+
+function recordActionButton(label = 'レシートを記録する') {
+    return `<button type="button" class="btn btn-primary" data-action="open-record">${icon('plus')}<span>${escapeHtml(label)}</span></button>`;
+}
+
+
+// ===== ホーム =====
+// 月の支出の要約。今月は「今日まで」と「このあとの固定費」を分ける。
+function summarizeMonth(date = currentMonth, now = new Date()) {
+    const month = getMonthEntries(date);
+    const isCurrent = isSameMonth(date, now);
+    const isFuture = startOfMonth(date) > startOfMonth(now);
+    const cutoff = isCurrent ? now : (isFuture ? new Date(date.getFullYear(), date.getMonth(), 0) : new Date(date.getFullYear(), date.getMonth() + 1, 1));
+    // 実際の記録は日付に関係なく支出。固定費の予定は日付が来たものだけ支出に数える。
+    const spentEntries = month.all.filter(entry => !entry.virtual || parseDate(entry.date) <= cutoff);
+    const scheduledEntries = month.virtual.filter(entry => parseDate(entry.date) > cutoff);
+    const spent = spentEntries.reduce((sum, entry) => sum + entryTotal(entry), 0);
+    const scheduled = scheduledEntries.reduce((sum, entry) => sum + entryTotal(entry), 0);
+    const totalDays = daysInMonth(date);
+    const today = isCurrent ? now.getDate() : (isFuture ? 0 : totalDays);
+    return { ...month, isCurrent, isFuture, spentEntries, scheduledEntries, spent, scheduled, totalDays, today };
+}
+
+function cumulativeByDay(entries, date, limitDay) {
+    const totalDays = daysInMonth(date);
+    const daily = new Array(totalDays).fill(0);
+    entries.forEach(entry => {
+        const d = parseDate(entry.date);
+        if (!isValidDate(d) || !isSameMonth(d, date)) return;
+        daily[d.getDate() - 1] += entryTotal(entry);
+    });
+    let running = 0;
+    return daily.map((value, index) => {
+        running += value;
+        return index < limitDay ? running : null;
+    });
+}
+
+// 予算の目安線。固定費は支払日にまとめて、残りは日割りで積み上げる。
+function budgetPaceByDay(date, budget) {
+    if (!(budget > 0)) return [];
+    const totalDays = daysInMonth(date);
+    const actual = receiptsInMonth(date);
+    const recurring = window.KakeiboSettings.recurringForMonth(date.getFullYear(), date.getMonth(), actual).entries;
+    const fixedByDay = new Array(totalDays).fill(0);
+    const fixedActual = actual.filter(isLinkedToRecurring);
+    [...recurring, ...fixedActual].forEach(entry => {
+        const d = parseDate(entry.date);
+        if (isValidDate(d)) fixedByDay[d.getDate() - 1] += entryTotal(entry);
+    });
+    const fixedTotal = fixedByDay.reduce((sum, value) => sum + value, 0);
+    const flexible = Math.max(0, budget - fixedTotal);
+    let fixedRunning = 0;
+    return fixedByDay.map((value, index) => {
+        fixedRunning += value;
+        return Math.round(fixedRunning + flexible * (index + 1) / totalDays);
+    });
+}
+
+function renderDashboard() {
+    const summary = summarizeMonth();
+    const hasAnyData = appData.receipts.length > 0 || (window.KakeiboSettings?.get?.().recurring || []).length > 0;
+    renderHero(summary, hasAnyData);
+    renderPending(summary);
+    renderCategoryBars(summary);
+    renderPaceChart(summary);
+    renderPriceMoves();
+    renderRecentEntries();
+    // まだ何も記録がないときは、はじめにの案内だけを見せる。
+    ['home-categories', 'home-pace', 'home-prices', 'home-recent'].forEach(id => {
+        document.getElementById(id).hidden = !hasAnyData;
+    });
+}
+
+function renderHero(summary, hasAnyData) {
+    const hero = document.getElementById('home-hero');
+    const budget = window.KakeiboSettings.monthlyBudget();
+    const monthName = `${currentMonth.getMonth() + 1}月`;
+
+    if (!hasAnyData) {
+        hero.className = 'card hero-card hero-welcome';
+        hero.innerHTML = `
+            <p class="hero-eyebrow">はじめに</p>
+            <h2 class="hero-welcome-title">レシートを撮るだけで、品目まで記録できます</h2>
+            <ol class="onboarding-steps">
+                <li><span class="step-num">1</span><div><strong>レシートを撮影する</strong><p>AIが店名・品目・金額・カテゴリを読み取ります。</p></div></li>
+                <li><span class="step-num">2</span><div><strong>予算を決める</strong><p>使ったペースと残りの金額がひと目で分かります。</p></div></li>
+                <li><span class="step-num">3</span><div><strong>家族を招待する</strong><p>同じ家計簿を一緒に記録できます。</p></div></li>
+            </ol>
+            <div class="hero-actions">
+                ${recordActionButton('最初の記録をつける')}
+                <button type="button" class="btn btn-secondary" data-open-settings="budget">予算を決める</button>
+            </div>`;
+        return;
+    }
+
+    hero.className = 'card hero-card';
+    const label = summary.isCurrent ? `${monthName}に使ったお金` : (summary.isFuture ? `${monthName}の予定` : `${monthName}の支出`);
+    const mainValue = summary.isFuture ? summary.scheduled : summary.spent;
+    const lines = [];
+    let meter = '';
+    let status = '';
+
+    // 前月の同じ日までとの比較
+    const previous = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
+    const prevEntries = getMonthEntries(previous).all;
+    if (summary.isCurrent || !summary.isFuture) {
+        const compareDay = summary.isCurrent ? Math.min(summary.today, daysInMonth(previous)) : daysInMonth(previous);
+        const prevCumulative = cumulativeByDay(prevEntries, previous, compareDay)[compareDay - 1] || 0;
+        if (prevCumulative > 0 || summary.spent > 0) {
+            const diff = summary.spent - prevCumulative;
+            const basis = summary.isCurrent ? '先月の同じ日まで' : '先月';
+            if (diff === 0) {
+                lines.push(`<span class="delta delta-flat">${basis}と同じ</span>`);
+            } else {
+                const up = diff > 0;
+                lines.push(`<span class="delta delta-${up ? 'up' : 'down'}">${icon(up ? 'arrow-up' : 'arrow-down')}${basis}より${formatCurrency(Math.abs(diff))}${up ? '多い' : '少ない'}</span>`);
+            }
+        }
+    }
+
+    if (budget > 0) {
+        const committed = summary.spent + summary.scheduled;
+        const remaining = budget - committed;
+        const ratio = Math.max(0, summary.spent / budget);
+        const scheduledRatio = Math.max(0, summary.scheduled / budget);
+        const pace = budgetPaceByDay(currentMonth, budget);
+        const paceToday = summary.isCurrent ? (pace[summary.today - 1] || 0) : budget;
+        let tone = 'ok';
+        if (committed > budget) tone = 'over';
+        else if (summary.isCurrent && summary.spent > paceToday * 1.05) tone = 'fast';
+
+        const paceMarker = summary.isCurrent ? `<span class="meter-marker" style="--at:${Math.min(100, paceToday / budget * 100)}%" title="今日までの目安 ${formatCurrency(paceToday)}"></span>` : '';
+        meter = `
+            <div class="meter meter-${tone}" role="img" aria-label="予算${formatCurrency(budget)}のうち${formatCurrency(summary.spent)}を使用">
+                <span class="meter-fill" style="width:${Math.min(100, ratio * 100)}%"></span>
+                <span class="meter-scheduled" style="left:${Math.min(100, ratio * 100)}%;width:${Math.max(0, Math.min(100 - ratio * 100, scheduledRatio * 100))}%"></span>
+                ${paceMarker}
+            </div>
+            <div class="meter-scale">
+                <span class="meter-legend"><span class="meter-key meter-key-used" aria-hidden="true"></span>使った ${formatCurrency(summary.spent)}</span>
+                ${summary.scheduled > 0 ? `<span class="meter-legend"><span class="meter-key meter-key-planned" aria-hidden="true"></span>固定費の予定 ${formatCurrency(summary.scheduled)}</span>` : ''}
+                ${summary.isCurrent ? '<span class="meter-legend"><span class="meter-key meter-key-pace" aria-hidden="true"></span>今日までの目安</span>' : ''}
+                <span class="meter-budget">予算 ${formatCurrency(budget)}</span>
+            </div>`;
+
+        if (remaining >= 0) {
+            const daysLeft = summary.isCurrent ? summary.totalDays - summary.today + 1 : 0;
+            status = `
+                <div class="hero-stat">
+                    <span class="hero-stat-label">${summary.isCurrent ? '使える残り' : (summary.isFuture ? '使える予算' : '残った予算')}</span>
+                    <strong class="hero-stat-value">${formatCurrency(remaining)}</strong>
+                    ${summary.scheduled > 0 ? '<span class="hero-stat-note">固定費の予定を除いた額</span>' : ''}
+                </div>
+                ${summary.isCurrent && daysLeft > 0 ? `
+                <div class="hero-stat">
+                    <span class="hero-stat-label">1日あたり</span>
+                    <strong class="hero-stat-value">${formatCurrency(Math.floor(remaining / daysLeft))}</strong>
+                    <span class="hero-stat-note">残り${daysLeft}日</span>
+                </div>` : ''}`;
+        } else {
+            status = `
+                <div class="hero-stat hero-stat-over">
+                    <span class="hero-stat-label">${icon('alert')}予算オーバー</span>
+                    <strong class="hero-stat-value">${formatCurrency(-remaining)}</strong>
+                </div>`;
+        }
+        if (summary.isCurrent && summary.today >= 3 && summary.today < summary.totalDays) {
+            const projected = projectMonthEnd(summary);
+            const over = projected > budget;
+            lines.push(`<span class="hero-note${over ? ' hero-note-warning' : ''}">${icon('chart')}このペースだと月末は${formatCurrency(projected)}（予算${over ? `を${formatCurrency(projected - budget)}超える見込み` : '内の見込み'}）</span>`);
+        }
+        if (tone === 'fast') lines.push(`<span class="hero-note hero-note-warning">${icon('alert')}今日までの目安より${formatCurrency(summary.spent - paceToday)}多く使っています</span>`);
+        else if (tone === 'ok' && summary.isCurrent && summary.spent > 0) lines.push(`<span class="hero-note">${icon('check')}予算どおりのペースです</span>`);
+    } else {
+        status = `<button type="button" class="btn btn-secondary btn-sm" data-open-settings="budget">${icon('target')}<span>予算を決めると残りが分かります</span></button>`;
+    }
+
+    if (summary.scheduled > 0 && !summary.isFuture) {
+        lines.push(`<span class="hero-note">${icon('repeat')}このあと固定費 ${formatCurrency(summary.scheduled)}（${summary.scheduledEntries.length}件）</span>`);
+    }
+
+    hero.innerHTML = `
+        <div class="hero-main">
+            <p class="hero-label">${escapeHtml(label)}</p>
+            <p class="hero-value">${formatCurrency(mainValue)}</p>
+            <div class="hero-lines">${lines.join('')}</div>
+        </div>
+        ${meter ? `<div class="hero-meter">${meter}</div>` : ''}
+        <div class="hero-stats">${status}</div>`;
+}
+
+function renderPending(summary) {
+    const card = document.getElementById('home-pending');
+    const pending = summary.pending || [];
+    if (!pending.length || summary.isFuture) {
+        card.hidden = true;
+        card.innerHTML = '';
+        return;
+    }
+    card.hidden = false;
+    card.className = 'card pending-card';
+    card.innerHTML = `
+        <header class="card-header">
+            <h2>${icon('repeat')}まだ記録していない固定費</h2>
+        </header>
+        <div class="pending-list">
+            ${pending.map(({ expense, date }) => `
+                <div class="pending-row">
+                    ${categoryDot(expense.category)}
+                    <div class="pending-copy">
+                        <strong>${escapeHtml(expense.name)}</strong>
+                        <span>${escapeHtml(expense.category)} · 毎月${expense.day}日ごろ</span>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm" data-record-recurring="${escapeHtml(expense.id)}" data-record-date="${escapeHtml(toInputDate(date))}">金額を記録</button>
+                </div>`).join('')}
+        </div>`;
+}
+
+function renderCategoryBars(summary) {
+    const container = document.getElementById('category-bars');
+    const settings = window.KakeiboSettings.get();
+    const spentByCategory = {};
+    summary.spentEntries.forEach(entry => {
+        Object.entries(categoryTotals(entry)).forEach(([name, value]) => {
+            spentByCategory[name] = (spentByCategory[name] || 0) + value;
+        });
+    });
+    const known = new Set(settings.categories.map(category => category.name));
+    const rows = settings.categories.map(category => ({ ...category, spent: spentByCategory[category.name] || 0 }));
+    Object.entries(spentByCategory).forEach(([name, spent]) => {
+        if (!known.has(name)) rows.push({ name, color: 'gray', budget: 0, spent, unknown: true });
+    });
+    const visible = rows.filter(row => row.spent > 0 || row.budget > 0).sort((a, b) => b.spent - a.spent || b.budget - a.budget);
+
+    if (!visible.length) {
+        container.innerHTML = emptyState({
+            iconName: 'tag',
+            title: `${currentMonth.getMonth() + 1}月の記録はまだありません`,
+            description: 'レシートを読み取るか手入力すると、カテゴリごとの支出が表示されます。',
+            action: recordActionButton('記録する')
+        });
+        return;
+    }
+
+    const maxValue = Math.max(...visible.map(row => Math.max(row.spent, row.budget)), 1);
+    container.innerHTML = visible.map(row => {
+        const hasBudget = row.budget > 0;
+        const over = hasBudget && row.spent > row.budget;
+        const scale = hasBudget ? Math.max(row.budget, row.spent) : maxValue;
+        const fill = Math.min(100, row.spent / scale * 100);
+        // 予算の位置は、超えたときだけ印を付ける（予算内ならバーの右端が予算）。
+        const budgetAt = over ? Math.min(100, row.budget / scale * 100) : null;
+        let note = '';
+        if (hasBudget) {
+            note = over
+                ? `<span class="bar-note bar-note-over">${icon('alert')}${formatCurrency(row.spent - row.budget)}オーバー</span>`
+                : `<span class="bar-note">残り ${formatCurrency(row.budget - row.spent)}</span>`;
+        }
+        return `
+            <button type="button" class="category-bar${over ? ' is-over' : ''}" data-history-category="${escapeHtml(row.name)}" aria-label="${escapeHtml(row.name)} ${formatCurrency(row.spent)}${hasBudget ? `、予算${formatCurrency(row.budget)}` : ''}。履歴を見る">
+                <span class="category-bar-head">
+                    <span class="category-bar-name">${categoryDot(row.name)}${escapeHtml(row.name)}</span>
+                    <span class="category-bar-value">${formatCurrency(row.spent)}${hasBudget ? `<span class="category-bar-budget"> / ${formatCurrency(row.budget)}</span>` : ''}</span>
+                </span>
+                <span class="bar-track${hasBudget ? ' has-budget' : ''}">
+                    <span class="bar-fill" style="width:${fill}%;--bar:${window.KakeiboSettings.colorVar(row.name)}"></span>
+                    ${budgetAt !== null ? `<span class="bar-budget-mark" style="left:${budgetAt}%"></span>` : ''}
+                </span>
+                ${note}
+            </button>`;
+    }).join('');
+}
+
+function renderPaceChart(summary) {
+    const canvas = document.getElementById('pace-chart');
+    const legend = document.getElementById('pace-legend');
+    const caption = document.getElementById('pace-caption');
+    destroyChart('pace');
+    if (typeof Chart === 'undefined' || !canvas) return;
+
+    const theme = chartTheme();
+    const totalDays = summary.totalDays;
+    const labels = Array.from({ length: totalDays }, (_, index) => `${index + 1}日`);
+    const limit = summary.isCurrent ? summary.today : (summary.isFuture ? 0 : totalDays);
+    const current = cumulativeByDay(summary.spentEntries, currentMonth, limit);
+    const previousMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
+    const prevDays = daysInMonth(previousMonth);
+    const previousRaw = cumulativeByDay(getMonthEntries(previousMonth).all, previousMonth, prevDays);
+    const previous = labels.map((_, index) => index < prevDays ? previousRaw[index] : null);
+    const budget = window.KakeiboSettings.monthlyBudget();
+    const pace = budgetPaceByDay(currentMonth, budget);
+
+    const datasets = [
+        {
+            label: `${currentMonth.getMonth() + 1}月`,
+            data: current,
+            borderColor: theme.accent,
+            backgroundColor: theme.accent,
+            borderWidth: 2,
+            pointRadius: context => (context.dataIndex === limit - 1 ? 4 : 0),
+            pointHoverRadius: 5,
+            pointBorderColor: theme.surface,
+            pointBorderWidth: 2,
+            tension: 0,
+            spanGaps: false,
+            order: 1
+        },
+        {
+            label: `${previousMonth.getMonth() + 1}月`,
+            data: previous,
+            borderColor: theme.muted,
+            backgroundColor: theme.muted,
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0,
+            order: 2
+        }
+    ];
+    const legendEntries = [
+        { label: `${currentMonth.getMonth() + 1}月（表示中）`, color: theme.accent, shape: 'line' },
+        { label: `${previousMonth.getMonth() + 1}月`, color: theme.muted, shape: 'line' }
+    ];
+    if (pace.length) {
+        datasets.push({
+            label: '予算の目安',
+            data: pace,
+            borderColor: cssVar('--warning'),
+            backgroundColor: cssVar('--warning'),
+            borderWidth: 1,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            tension: 0,
+            order: 3
+        });
+        legendEntries.push({ label: '予算の目安', color: cssVar('--warning'), shape: 'thin' });
+    }
+    renderLegend(legend, legendEntries);
+    caption.textContent = summary.isCurrent ? `${summary.today}日時点の累計` : '月初からの累計';
+
+    charts.pace = new Chart(canvas, {
+        type: 'line',
+        data: { labels, datasets },
+        plugins: [crosshairPlugin],
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            layout: { padding: { top: 6, right: 6 } },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    ...baseTooltip(theme),
+                    callbacks: {
+                        title: items => items.length ? `${items[0].dataIndex + 1}日まで` : '',
+                        label: item => item.parsed.y === null ? null : ` ${item.dataset.label}  ${formatCurrency(item.parsed.y)}`
+                    },
+                    filter: item => item.parsed.y !== null
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    border: { color: theme.axis },
+                    ticks: {
+                        color: theme.muted,
+                        maxRotation: 0,
+                        autoSkip: false,
+                        callback: (value, index) => ([0, 9, 19, totalDays - 1].includes(index) ? labels[index] : '')
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    grid: { color: theme.grid, drawTicks: false },
+                    border: { display: false },
+                    ticks: { color: theme.muted, padding: 6, maxTicksLimit: 5, callback: value => `¥${formatCompactYen(value)}` }
+                }
+            }
+        }
+    });
+}
+
+// ===== 品目の価格 =====
+function buildItemIndex(receipts = appData.receipts) {
+    const map = new Map();
+    receipts.forEach(receipt => {
+        if (entryKind(receipt) !== 'receipt') return;
+        const date = parseDate(receipt.date);
+        if (!isValidDate(date)) return;
+        (receipt.items || []).forEach(item => {
+            const name = String(item.name || '').trim();
+            if (!name) return;
+            if (!map.has(name)) map.set(name, { name, category: item.category || 'その他', latestDate: date, purchases: [], spend: 0, quantity: 0 });
+            const entry = map.get(name);
+            // カテゴリは最後に買ったときのものを使う（品目の編集やカテゴリ変更を反映するため）。
+            if (date >= entry.latestDate) {
+                entry.latestDate = date;
+                entry.category = item.category || 'その他';
+            }
+            const quantity = Math.max(1, Number(item.quantity) || 1);
+            const unit = Math.round(getItemLineTotal(item) / quantity);
+            entry.purchases.push({ date, unit, quantity, store: receipt.store, receiptId: receipt.id });
+            entry.spend += getItemLineTotal(item);
+            entry.quantity += quantity;
+        });
+    });
+    return [...map.values()].map(entry => {
+        entry.purchases.sort((a, b) => a.date - b.date);
+        const last = entry.purchases[entry.purchases.length - 1];
+        const units = entry.purchases.map(purchase => purchase.unit);
+        const previous = entry.purchases.slice(0, -1).map(purchase => purchase.unit);
+        const previousAvg = previous.length ? previous.reduce((sum, value) => sum + value, 0) / previous.length : null;
+        return {
+            ...entry,
+            count: entry.purchases.length,
+            last,
+            lastUnit: last.unit,
+            avgUnit: Math.round(units.reduce((sum, value) => sum + value, 0) / units.length),
+            minUnit: Math.min(...units),
+            maxUnit: Math.max(...units),
+            previousAvg,
+            change: previousAvg ? (last.unit - previousAvg) / previousAvg : null,
+            changeYen: previousAvg ? Math.round(last.unit - previousAvg) : null,
+            stores: [...new Set(entry.purchases.map(purchase => purchase.store).filter(Boolean))]
+        };
+    });
+}
+
+function significantMoves(items, { since } = {}) {
+    return items.filter(item => item.count >= 2 && item.change !== null
+        && Math.abs(item.change) >= 0.03 && Math.abs(item.changeYen) >= 5
+        && (!since || item.last.date >= since));
+}
+
+function priceMoveRow(item) {
+    const up = item.change > 0;
+    return `
+        <button type="button" class="price-move" data-item-name="${escapeHtml(item.name)}">
+            <span class="price-move-main">
+                <span class="price-move-name">${escapeHtml(item.name)}</span>
+                <span class="price-move-meta">${categoryDot(item.category)}${escapeHtml(item.category)} · ${item.count}回購入 · 最後は${escapeHtml(formatMonthDay(item.last.date))}</span>
+            </span>
+            <span class="price-move-side">
+                <span class="price-move-price">${formatCurrency(Math.round(item.previousAvg))} → ${formatCurrency(item.lastUnit)}</span>
+                <span class="delta delta-${up ? 'up' : 'down'}">${icon(up ? 'arrow-up' : 'arrow-down')}${up ? '値上がり' : '値下がり'} ${formatPercent(item.change)}</span>
+            </span>
+        </button>`;
+}
+
+function renderPriceMoves() {
+    const container = document.getElementById('price-moves');
+    const monthEnd = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0, 23, 59);
+    const since = new Date(monthEnd.getTime() - 75 * 24 * 60 * 60 * 1000);
+    const relevant = appData.receipts.filter(receipt => parseDate(receipt.date) <= monthEnd);
+    const moves = significantMoves(buildItemIndex(relevant), { since })
+        .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
+        .slice(0, 4);
+    if (!moves.length) {
+        container.innerHTML = `<p class="muted-copy">同じ品を2回以上買うと、前回までと比べた値動きがここに出ます。</p>`;
+        return;
+    }
+    container.innerHTML = moves.map(priceMoveRow).join('');
+}
+
+// ===== 記録の行 =====
+function entryRow(entry, { showDate = false } = {}) {
+    const kind = entryKind(entry);
+    const category = dominantCategory(entry);
+    const kindIcon = { receipt: 'receipt', manual: 'pencil', recurring: 'repeat' }[kind];
+    const summary = itemSummary(entry);
+    const badges = [];
+    if (entry.virtual) badges.push(`<span class="tag tag-muted">${parseDate(entry.date) > new Date() ? '予定' : '固定費'}</span>`);
+    else if (isLinkedToRecurring(entry)) badges.push('<span class="tag tag-muted">固定費</span>');
+    if (entry.status === 'review') badges.push(`<span class="tag tag-warning">${icon('alert')}要確認</span>`);
+    const sub = [
+        showDate ? escapeHtml(formatMonthDay(entry.date)) : '',
+        `${categoryDot(category)}${escapeHtml(category)}`,
+        summary ? escapeHtml(summary) : ''
+    ].filter(Boolean).join('<span class="sep" aria-hidden="true">·</span>');
+    return `
+        <button type="button" class="entry-row${entry.virtual ? ' is-virtual' : ''}" data-entry-id="${escapeHtml(entry.id)}">
+            <span class="entry-icon">${icon(kindIcon)}</span>
+            <span class="entry-main">
+                <span class="entry-title">${escapeHtml(entry.store)}</span>
+                <span class="entry-sub">${sub}</span>
+            </span>
+            <span class="entry-side">
+                <span class="entry-amount">${formatCurrency(entryTotal(entry))}</span>
+                ${badges.length ? `<span class="entry-badges">${badges.join('')}</span>` : ''}
+            </span>
+        </button>`;
+}
+
+function renderRecentEntries() {
+    const container = document.getElementById('recent-entries');
+    const recent = sortByDateDesc(appData.receipts).slice(0, 6);
+    if (!recent.length) {
+        container.innerHTML = `<p class="muted-copy">まだ記録がありません。</p>`;
+        return;
+    }
+    container.innerHTML = recent.map(entry => entryRow(entry, { showDate: true })).join('');
+}
+
+
+// ===== 履歴 =====
+function matchesHistoryFilter(entry, filter) {
+    if (filter === 'all') return true;
+    if (filter === 'review') return entry.status === 'review';
+    if (filter === 'recurring') return entryKind(entry) === 'recurring' || isLinkedToRecurring(entry);
+    return entryKind(entry) === filter;
+}
+
+function matchesSearch(entry, query) {
+    if (!query) return true;
+    const haystack = [entry.store, entry.memo, ...(entry.items || []).map(item => item.name)]
+        .join(' ').toLowerCase();
+    return haystack.includes(query);
+}
+
+function fillCategorySelect(select, { includeUnknown = [] } = {}) {
+    if (!select) return;
+    const previous = select.value || 'all';
+    const names = [...new Set([...categoryNames(), ...includeUnknown])];
+    select.innerHTML = `<option value="all">すべてのカテゴリ</option>` +
+        names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+    select.value = names.includes(previous) ? previous : 'all';
+}
+
+function renderHistory() {
+    const container = document.getElementById('receipts-container');
+    const summaryEl = document.getElementById('history-summary');
+    const month = getMonthEntries(currentMonth);
+    const categoryFilter = document.getElementById('history-category-filter');
+    const usedCategories = [...new Set(month.all.flatMap(entry => (entry.items || []).map(item => item.category)))];
+    fillCategorySelect(categoryFilter, { includeUnknown: usedCategories });
+
+    const query = document.getElementById('receipt-search').value.trim().toLowerCase();
+    const category = categoryFilter.value;
+    const filtered = sortByDateDesc(month.all).filter(entry => matchesHistoryFilter(entry, historyFilter)
+        && matchesSearch(entry, query)
+        && (category === 'all' || (entry.items || []).some(item => item.category === category)));
+
+    // 絞り込み中のカテゴリだけの金額を合計する。
+    const amountOf = entry => category === 'all'
+        ? entryTotal(entry)
+        : (entry.items || []).filter(item => item.category === category).reduce((sum, item) => sum + getItemLineTotal(item), 0);
+    const now = new Date();
+    const upcoming = filtered.filter(entry => entry.virtual && parseDate(entry.date) > now).reverse();
+    const past = filtered.filter(entry => !(entry.virtual && parseDate(entry.date) > now));
+    const total = past.reduce((sum, entry) => sum + amountOf(entry), 0);
+    const upcomingTotal = upcoming.reduce((sum, entry) => sum + amountOf(entry), 0);
+    const reviewCount = month.actual.filter(entry => entry.status === 'review').length;
+    summaryEl.innerHTML = `
+        <div class="history-total">
+            <span class="history-total-label">${escapeHtml(formatMonthLabel(currentMonth))}${filtered.length !== month.all.length ? '（絞り込み中）' : ''}</span>
+            <strong>${formatCurrency(total)}</strong>
+            <span class="history-total-count">${past.length}件${upcoming.length ? `・このあと予定 ${formatCurrency(upcomingTotal)}` : ''}</span>
+        </div>
+        ${reviewCount ? `<button type="button" class="tag tag-warning tag-button" data-history-filter="review">${icon('alert')}要確認 ${reviewCount}件</button>` : ''}`;
+
+    document.querySelectorAll('#receipt-filter .chip').forEach(chip => {
+        const active = chip.dataset.filter === historyFilter;
+        chip.classList.toggle('is-active', active);
+        chip.setAttribute('aria-pressed', String(active));
+    });
+
+    if (!month.all.length) {
+        container.innerHTML = emptyState({
+            iconName: 'calendar',
+            title: `${formatMonthLabel(currentMonth)}の記録はありません`,
+            description: appData.receipts.length ? '上の矢印で別の月を表示できます。' : 'レシートを読み取るか手入力すると、ここに並びます。',
+            action: recordActionButton('記録する')
+        });
+        return;
+    }
+    if (!filtered.length) {
+        container.innerHTML = emptyState({ iconName: 'search', title: '条件に合う記録がありません', description: '検索語や絞り込みを変えてみてください。' });
+        return;
+    }
+
+    const groups = new Map();
+    past.forEach(entry => {
+        const key = dayKey(parseDate(entry.date));
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(entry);
+    });
+    const upcomingHtml = upcoming.length ? `
+        <section class="day-group day-group-upcoming" aria-label="このあとの予定">
+            <header class="day-header">
+                <span class="day-label">${icon('repeat')}このあとの予定</span>
+                <span class="day-total">${formatCurrency(upcomingTotal)}</span>
+            </header>
+            <div class="entry-list">${upcoming.map(entry => entryRow(entry, { showDate: true })).join('')}</div>
+        </section>` : '';
+    // 今日の記録を先頭に出すため、このあとの予定は一番下にまとめる。
+    container.innerHTML = [...groups.entries()].map(([key, entries]) => {
+        const dayTotal = entries.reduce((sum, entry) => sum + amountOf(entry), 0);
+        const [y, m, d] = key.split('-').map(Number);
+        const date = new Date(y, m - 1, d);
+        const isToday = dayKey(new Date()) === key;
+        return `
+            <section class="day-group" aria-label="${escapeHtml(formatMonthDay(date, { weekday: true }))}">
+                <header class="day-header">
+                    <span class="day-label">${escapeHtml(formatMonthDay(date, { weekday: true }))}${isToday ? '<span class="tag tag-accent">今日</span>' : ''}</span>
+                    <span class="day-total">${formatCurrency(dayTotal)}</span>
+                </header>
+                <div class="entry-list">${entries.map(entry => entryRow(entry)).join('')}</div>
+            </section>`;
+    }).join('') + upcomingHtml;
+}
+
+function initHistoryControls() {
+    let searchTimer = 0;
+    document.getElementById('receipt-search').addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(renderHistory, 120);
+    });
+    document.getElementById('history-category-filter').addEventListener('change', renderHistory);
+    document.getElementById('receipt-filter').addEventListener('click', event => {
+        const chip = event.target.closest('[data-filter]');
+        if (!chip) return;
+        historyFilter = chip.dataset.filter;
+        renderHistory();
+    });
+}
+
+function findEntry(id) {
+    const key = String(id);
+    const actual = appData.receipts.find(entry => String(entry.id) === key);
+    if (actual) return actual;
+    if (key.startsWith('recurring:')) {
+        const [, , month] = key.split(':');
+        const [y, m] = month.split('-').map(Number);
+        return getMonthEntries(new Date(y, m - 1, 1)).virtual.find(entry => entry.id === key) || null;
+    }
+    return null;
+}
+
+// ===== 詳細シート =====
 function closeDetailModal() {
     const modal = document.getElementById('detail-modal');
     if (!modal) return;
-    modal.classList.remove('active');
-    modal.setAttribute('aria-hidden', 'true');
+    closeOverlay(modal);
     if (detailImageObjectUrl) {
         URL.revokeObjectURL(detailImageObjectUrl);
         detailImageObjectUrl = '';
     }
 }
 
-function showDetailModal(title, bodyHtml, onOpen) {
+// actions: [{ label, icon, variant: 'primary'|'secondary'|'danger', onClick, close }]
+function showDetailModal(title, bodyHtml, onOpen, actions = null) {
     const modal = document.getElementById('detail-modal');
     const titleEl = document.getElementById('detail-modal-title');
     const bodyEl = document.getElementById('detail-modal-body');
+    const footer = document.getElementById('detail-modal-footer');
     if (!modal || !titleEl || !bodyEl) return;
-
+    if (detailImageObjectUrl) {
+        URL.revokeObjectURL(detailImageObjectUrl);
+        detailImageObjectUrl = '';
+    }
     titleEl.textContent = title;
     bodyEl.innerHTML = bodyHtml;
-    modal.classList.add('active');
-    modal.setAttribute('aria-hidden', 'false');
+    bodyEl.scrollTop = 0;
+    const buttons = actions || [{ label: '閉じる', variant: 'secondary', close: true }];
+    footer.innerHTML = buttons.map((action, index) => `
+        <button type="button" class="btn btn-${action.variant || 'secondary'}${action.variant === 'danger' ? ' btn-push' : ''}" data-detail-action="${index}" ${action.form ? `form="${escapeHtml(action.form)}" type="submit"` : ''}>
+            ${action.icon ? icon(action.icon) : ''}<span>${escapeHtml(action.label)}</span>
+        </button>`).join('');
+    footer.querySelectorAll('[data-detail-action]').forEach(button => {
+        const action = buttons[Number(button.dataset.detailAction)];
+        if (action.form) return;
+        button.addEventListener('click', async () => {
+            if (action.onClick) {
+                const result = await action.onClick(button);
+                if (result === false) return;
+            }
+            if (action.close !== false) closeDetailModal();
+        });
+    });
+    if (!modal.classList.contains('active')) openOverlay(modal);
     if (onOpen) onOpen(bodyEl);
 }
 
 function initDetailModal() {
     const modal = document.getElementById('detail-modal');
-    const closeBtn = document.getElementById('detail-modal-close');
-    const footerBtn = document.getElementById('detail-modal-footer-close');
     if (!modal) return;
-
-    closeBtn?.addEventListener('click', closeDetailModal);
-    footerBtn?.addEventListener('click', closeDetailModal);
+    document.getElementById('detail-modal-close')?.addEventListener('click', closeDetailModal);
     modal.addEventListener('click', event => {
         if (event.target === modal) closeDetailModal();
     });
 }
 
-function openReceiptDetails(receipt) {
-    const items = Array.isArray(receipt.items) ? receipt.items : [];
-    const rows = items.length > 0
-        ? items.map(item => `
-            <tr>
-                <td>${escapeHtml(item.name)}</td>
-                <td>${item.quantity || 1}</td>
-                <td>${formatCurrency(Number(item.price) || 0)}</td>
-                <td>${formatCurrency(getItemLineTotal(item))}</td>
-            </tr>
-        `).join('')
-        : '<tr><td colspan="4">購入品目がありません</td></tr>';
-    const hasImage = Boolean(receipt.image_storage?.object_name);
-    const imagePanel = hasImage ? `
-        <div class="detail-section-title">レシート画像</div>
-        <div class="receipt-image-viewer">
-            <div class="receipt-image-loading" data-receipt-image-loading>非公開画像を読み込み中...</div>
-            <img data-receipt-image alt="${escapeHtml(receipt.store || 'レシート')}のレシート画像" hidden>
-        </div>
-    ` : `
-        <div class="detail-section-title">レシート画像</div>
-        <div class="receipt-image-empty">このレシートには保存画像がありません</div>
-    `;
+async function loadReceiptImage(receipt, body) {
+    const holder = body.querySelector('[data-receipt-image-holder]');
+    if (!holder) return;
+    const loading = holder.querySelector('[data-receipt-image-loading]');
+    const image = holder.querySelector('img');
+    try {
+        const response = await window.KakeiboShared.request(`/receipts/${encodeURIComponent(receipt.id)}/image`);
+        if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.detail || 'レシート画像を読み込めませんでした。');
+        }
+        const blob = await response.blob();
+        if (detailImageObjectUrl) URL.revokeObjectURL(detailImageObjectUrl);
+        detailImageObjectUrl = URL.createObjectURL(blob);
+        image.src = detailImageObjectUrl;
+        image.hidden = false;
+        loading.hidden = true;
+    } catch (error) {
+        loading.textContent = error instanceof Error ? error.message : 'レシート画像を読み込めませんでした。';
+        loading.classList.add('error');
+    }
+}
 
-    showDetailModal(`${receipt.store || 'レシート'}の詳細`, `
-        <div class="detail-meta-grid">
-            <div class="detail-meta-card"><div class="detail-meta-label">店舗</div><div class="detail-meta-value">${escapeHtml(receipt.store)}</div></div>
-            <div class="detail-meta-card"><div class="detail-meta-label">購入日時</div><div class="detail-meta-value">${escapeHtml(formatDate(receipt.date))}</div></div>
-            <div class="detail-meta-card"><div class="detail-meta-label">合計金額</div><div class="detail-meta-value">${formatCurrency(Number(receipt.total) || 0)}</div></div>
-            <div class="detail-meta-card"><div class="detail-meta-label">品目数</div><div class="detail-meta-value">${items.length}点</div></div>
-            <div class="detail-meta-card"><div class="detail-meta-label">信頼度</div><div class="detail-meta-value">${Math.round(Math.max(0, Math.min(1, Number(receipt.confidence) || 0)) * 100)}%</div></div>
-            <div class="detail-meta-card"><div class="detail-meta-label">ステータス</div><div class="detail-meta-value">${getStatusBadge(receipt.status)}</div></div>
+async function deleteEntry(entry) {
+    const label = entry.store || '記録';
+    if (!window.confirm(`「${label}」${formatCurrency(entryTotal(entry))} の記録を削除します。家計簿のメンバー全員から見えなくなります。`)) return false;
+    try {
+        await window.KakeiboShared.requestJson(`/receipts/${encodeURIComponent(entry.id)}`, { method: 'DELETE' });
+        const index = appData.receipts.findIndex(item => String(item.id) === String(entry.id));
+        if (index >= 0) appData.receipts.splice(index, 1);
+        lastSharedSyncAt = Date.now();
+        updateStorageStatus();
+        renderCurrentPage();
+        showToast(`「${label}」の記録を削除しました`, 'trash');
+        return true;
+    } catch (error) {
+        showToast(error instanceof Error ? error.message : '記録を削除できませんでした', 'alert');
+        return false;
+    }
+}
+
+function openEntryDetails(entry) {
+    if (!entry) return;
+    const kind = entryKind(entry);
+    if (kind === 'recurring') {
+        openRecurringOccurrence(entry);
+        return;
+    }
+    const items = entry.items || [];
+    const totals = Object.entries(categoryTotals(entry)).sort((a, b) => b[1] - a[1]);
+    const hasImage = Boolean(entry.image_storage?.object_name);
+    const meta = [
+        ['日時', escapeHtml(formatMonthDay(entry.date, { weekday: true })) + (kind === 'receipt' ? ` ${escapeHtml(timeOf(entry.date))}` : '')],
+        ['種類', kind === 'manual' ? '手入力' : 'レシート'],
+        kind === 'receipt' ? ['状態', getStatusBadge(entry.status)] : null,
+        entry.memo ? ['メモ', escapeHtml(entry.memo)] : null,
+        entry.created_by?.name ? ['記録した人', escapeHtml(entry.created_by.name)] : null
+    ].filter(Boolean);
+
+    const body = `
+        <div class="detail-hero">
+            <p class="detail-hero-value">${formatCurrency(entryTotal(entry))}</p>
+            <div class="detail-categories">${totals.map(([name, value]) => `<span class="tag">${categoryDot(name)}${escapeHtml(name)} ${formatCurrency(value)}</span>`).join('')}</div>
         </div>
-        ${imagePanel}
-        <div class="detail-section-title">購入品目（${items.length}点）</div>
-        <table class="detail-items-table">
-            <thead><tr><th>品名</th><th>数量</th><th>単価</th><th>小計</th></tr></thead>
-            <tbody>${rows}</tbody>
-        </table>
-    `, async body => {
-        if (!hasImage) return;
-        const loading = body.querySelector('[data-receipt-image-loading]');
-        const image = body.querySelector('[data-receipt-image]');
-        try {
-            const response = await window.KakeiboShared.request(`/receipts/${encodeURIComponent(receipt.id)}/image`);
-            if (!response.ok) {
-                const payload = await response.json().catch(() => ({}));
-                throw new Error(payload.detail || 'レシート画像を読み込めませんでした。');
+        <dl class="detail-meta">${meta.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>
+        ${kind === 'receipt' ? `
+        <h4 class="detail-section-title">品目（${items.length}点）</h4>
+        <div class="table-scroll">
+            <table class="detail-items-table">
+                <thead><tr><th scope="col">品名</th><th scope="col" class="num">単価</th><th scope="col" class="num">数量</th><th scope="col" class="num">金額</th></tr></thead>
+                <tbody>${items.map(item => `
+                    <tr>
+                        <td><button type="button" class="link-button item-link" data-item-name="${escapeHtml(item.name)}">${escapeHtml(item.name)}</button><span class="item-cat">${categoryDot(item.category)}${escapeHtml(item.category)}</span></td>
+                        <td class="num">${formatCurrency(Number(item.price) || 0)}</td>
+                        <td class="num">${item.quantity || 1}</td>
+                        <td class="num">${formatCurrency(getItemLineTotal(item))}</td>
+                    </tr>`).join('') || '<tr><td colspan="4">品目がありません</td></tr>'}
+                </tbody>
+            </table>
+        </div>
+        <h4 class="detail-section-title">レシート画像</h4>
+        ${hasImage ? `
+            <div class="receipt-image-viewer" data-receipt-image-holder>
+                <div class="receipt-image-loading" data-receipt-image-loading>画像を読み込み中...</div>
+                <img alt="${escapeHtml(entry.store || 'レシート')}のレシート画像" hidden>
+            </div>` : '<p class="muted-copy">この記録には保存された画像がありません。</p>'}` : ''}`;
+
+    const actions = [
+        { label: '削除', icon: 'trash', variant: 'danger', close: false, onClick: async () => { if (await deleteEntry(entry)) closeDetailModal(); return false; } },
+        {
+            label: '編集', icon: 'pencil', variant: 'primary', onClick: () => {
+                closeDetailModal();
+                if (kind === 'manual') openManualEntry({ entry });
+                else window.openReceiptEditor?.(entry);
             }
-            const blob = await response.blob();
-            if (detailImageObjectUrl) URL.revokeObjectURL(detailImageObjectUrl);
-            detailImageObjectUrl = URL.createObjectURL(blob);
-            image.src = detailImageObjectUrl;
-            image.hidden = false;
-            loading.hidden = true;
-        } catch (error) {
-            loading.textContent = error instanceof Error ? error.message : 'レシート画像を読み込めませんでした。';
-            loading.classList.add('error');
+        }
+    ];
+    showDetailModal(entry.store || '記録の詳細', body, element => {
+        if (hasImage) loadReceiptImage(entry, element);
+        element.querySelectorAll('.item-link').forEach(button => {
+            button.addEventListener('click', () => {
+                closeDetailModal();
+                openItemDetail(button.dataset.itemName);
+            });
+        });
+        const image = element.querySelector('[data-receipt-image-holder] img');
+        image?.addEventListener('click', () => {
+            if (image.src) window.KakeiboUpload?.openLightbox?.(image.src, entry.store);
+        });
+    }, actions);
+}
+
+function timeOf(value) {
+    const d = parseDate(value);
+    if (!isValidDate(d) || /^\d{4}-\d{2}-\d{2}$/.test(String(value))) return '';
+    const hh = d.getHours();
+    const mm = d.getMinutes();
+    if (hh === 12 && mm === 0) return '';
+    return `${hh}:${String(mm).padStart(2, '0')}`;
+}
+
+// 固定費の予定（まだ実際の記録がないもの）
+function openRecurringOccurrence(entry) {
+    const expense = (window.KakeiboSettings.get().recurring || []).find(item => item.id === entry.recurring_id);
+    const date = parseDate(entry.date);
+    const future = date > new Date();
+    const body = `
+        <div class="detail-hero">
+            <p class="detail-hero-value">${formatCurrency(entryTotal(entry))}</p>
+            <div class="detail-categories">${categoryDot(dominantCategory(entry))}<span>${escapeHtml(dominantCategory(entry))}</span></div>
+        </div>
+        <p class="detail-copy">${future ? `${escapeHtml(formatMonthDay(date))}に引き落とし予定の固定費です。` : '設定した金額で自動計上している固定費です。'}金額が違った月は「今月の金額を記録」で実際の金額に置き換えられます。</p>
+        <dl class="detail-meta">
+            <div><dt>支払日</dt><dd>毎月${expense ? expense.day : date.getDate()}日</dd></div>
+            ${expense?.memo ? `<div><dt>メモ</dt><dd>${escapeHtml(expense.memo)}</dd></div>` : ''}
+        </dl>`;
+    showDetailModal(entry.store, body, null, [
+        { label: '固定費の設定', icon: 'settings', variant: 'secondary', onClick: () => { if (expense) openRecurringEditor(expense); return false; } },
+        { label: '今月の金額を記録', icon: 'pencil', variant: 'primary', onClick: () => openManualEntry({ recurring: expense, date }) }
+    ]);
+}
+
+
+// ===== 分析 =====
+function setAnalysisTab(tab) {
+    analysisTab = tab === 'items' ? 'items' : 'trend';
+    document.querySelectorAll('[role="tab"][data-analysis-tab]').forEach(button => {
+        const active = button.dataset.analysisTab === analysisTab;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-selected', String(active));
+        button.tabIndex = active ? 0 : -1;
+    });
+    document.getElementById('analysis-trend').hidden = analysisTab !== 'trend';
+    document.getElementById('analysis-items').hidden = analysisTab !== 'items';
+}
+
+function renderAnalysis() {
+    setAnalysisTab(analysisTab);
+    if (analysisTab === 'trend') renderTrendPanel();
+    else renderItemsPanel();
+}
+
+function monthsEndingAt(date, count) {
+    return Array.from({ length: count }, (_, index) => new Date(date.getFullYear(), date.getMonth() - (count - 1 - index), 1));
+}
+
+// カテゴリは設定の並び順で色が固定。9番目以降と未登録のカテゴリは「その他」にまとめる。
+function chartCategories(monthData) {
+    const settings = window.KakeiboSettings.categories();
+    const used = new Set();
+    monthData.forEach(month => Object.keys(month.byCategory).forEach(name => used.add(name)));
+    const ordered = settings.filter(category => used.has(category.name) && category.name !== 'その他').slice(0, 8);
+    const keep = new Set(ordered.map(category => category.name));
+    return { ordered, keep };
+}
+
+function renderTrendPanel() {
+    const months = monthsEndingAt(currentMonth, trendRange);
+    const monthData = months.map(date => {
+        const entries = date > new Date() && !isSameMonth(date, new Date()) ? [] : summarizeMonth(date).spentEntries;
+        const byCategory = {};
+        entries.forEach(entry => Object.entries(categoryTotals(entry)).forEach(([name, value]) => {
+            byCategory[name] = (byCategory[name] || 0) + value;
+        }));
+        const total = Object.values(byCategory).reduce((sum, value) => sum + value, 0);
+        return { date, byCategory, total, count: entries.length };
+    });
+    const { ordered, keep } = chartCategories(monthData);
+    const series = [...ordered.map(category => ({ name: category.name, slot: category.color })), { name: 'その他', slot: 'gray' }];
+    const valueOf = (month, name) => name === 'その他'
+        ? Object.entries(month.byCategory).filter(([key]) => !keep.has(key)).reduce((sum, [, value]) => sum + value, 0)
+        : (month.byCategory[name] || 0);
+    const visibleSeries = series.filter(entry => monthData.some(month => valueOf(month, entry.name) > 0));
+
+    renderTrendStats(monthData);
+    renderMonthlyChart(monthData, visibleSeries, valueOf);
+    renderMonthlyTable(monthData, visibleSeries, valueOf);
+    renderStoreRanking();
+}
+
+function projectMonthEnd(summary) {
+    // 固定費（予定・実績）は確定額として、それ以外の支出は今日までのペースで月末まで伸ばす。
+    const flexible = summary.spentEntries
+        .filter(entry => !entry.virtual && !isLinkedToRecurring(entry))
+        .reduce((sum, entry) => sum + entryTotal(entry), 0);
+    const daysLeft = Math.max(0, summary.totalDays - summary.today);
+    const perDay = summary.today > 0 ? flexible / summary.today : 0;
+    return Math.round(summary.spent + summary.scheduled + perDay * daysLeft);
+}
+
+function renderTrendStats(monthData) {
+    const container = document.getElementById('trend-stats');
+    const current = monthData[monthData.length - 1];
+    const past = monthData.slice(0, -1).filter(month => month.total > 0);
+    const average = past.length ? past.reduce((sum, month) => sum + month.total, 0) / past.length : 0;
+    const budget = window.KakeiboSettings.monthlyBudget();
+    const summary = summarizeMonth(current.date);
+    const monthName = `${current.date.getMonth() + 1}月`;
+    const diffText = (value, base, noun) => value >= base ? `${noun}より${formatCurrency(value - base)}多い` : `${noun}より${formatCurrency(base - value)}少ない`;
+    let tiles;
+    if (summary.isCurrent && summary.today < summary.totalDays) {
+        const projected = projectMonthEnd(summary);
+        tiles = [
+            { label: `${monthName}の支出（今日まで）`, value: formatCurrency(current.total), note: `${summary.today}日目・${current.count}件の記録` },
+            { label: '月末の見込み', value: formatCurrency(projected), note: budget > 0 ? diffText(projected, budget, '予算') : '今日までのペースと固定費から計算' },
+            { label: `それまでの${past.length || ''}か月平均`, value: past.length ? formatCurrency(average) : '—', note: past.length ? diffText(projected, average, '見込みは平均') : 'データが増えると表示' }
+        ];
+    } else {
+        tiles = [
+            { label: `${monthName}の支出`, value: formatCurrency(current.total), note: current.count ? `${current.count}件の記録` : '記録なし' },
+            { label: `それまでの${past.length || ''}か月平均`, value: past.length ? formatCurrency(average) : '—', note: past.length && current.total ? diffText(current.total, average, '平均') : 'データが増えると表示' },
+            budget > 0
+                ? { label: '予算との差', value: formatCurrency(Math.abs(budget - current.total)), note: current.total > budget ? '予算オーバー' : '予算内' }
+                : { label: '予算', value: '未設定', note: '設定すると比較できます' }
+        ];
+    }
+    container.innerHTML = tiles.map(tile => `
+        <div class="stat-tile">
+            <span class="stat-label">${escapeHtml(tile.label)}</span>
+            <strong class="stat-value">${tile.value}</strong>
+            <span class="stat-note">${escapeHtml(tile.note)}</span>
+        </div>`).join('');
+}
+
+function renderMonthlyChart(monthData, series, valueOf) {
+    const canvas = document.getElementById('monthly-chart');
+    destroyChart('monthly');
+    if (typeof Chart === 'undefined' || !canvas) return;
+    const theme = chartTheme();
+    const labels = monthData.map(month => (month.date.getMonth() === 0 || month === monthData[0])
+        ? `${month.date.getFullYear() % 100}年${month.date.getMonth() + 1}月` : `${month.date.getMonth() + 1}月`);
+    // 積み上げの一番上の要素だけ角を丸める。
+    const topIndex = monthData.map(month => {
+        let top = -1;
+        series.forEach((entry, index) => { if (valueOf(month, entry.name) > 0) top = index; });
+        return top;
+    });
+    const datasets = series.map((entry, datasetIndex) => ({
+        label: entry.name,
+        data: monthData.map(month => valueOf(month, entry.name)),
+        backgroundColor: slotColor(entry.slot),
+        hoverBackgroundColor: slotColor(entry.slot),
+        borderColor: theme.surface,
+        borderWidth: { top: 2, right: 0, bottom: 0, left: 0 },
+        borderSkipped: false,
+        borderRadius: context => (topIndex[context.dataIndex] === datasetIndex ? { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 } : 0),
+        maxBarThickness: 24,
+        categoryPercentage: 0.7,
+        barPercentage: 0.9
+    }));
+    renderLegend(document.getElementById('monthly-legend'), series.map(entry => ({ label: entry.name, color: slotColor(entry.slot), shape: 'rect' })));
+    if (!series.length) {
+        canvas.parentElement.classList.add('is-empty');
+    } else {
+        canvas.parentElement.classList.remove('is-empty');
+    }
+
+    charts.monthly = new Chart(canvas, {
+        type: 'bar',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    ...baseTooltip(theme),
+                    itemSort: (a, b) => b.datasetIndex - a.datasetIndex,
+                    filter: item => item.parsed.y > 0,
+                    callbacks: {
+                        title: items => items.length ? formatMonthLabel(monthData[items[0].dataIndex].date) : '',
+                        label: item => ` ${item.dataset.label}  ${formatCurrency(item.parsed.y)}`,
+                        footer: items => items.length ? `合計 ${formatCurrency(monthData[items[0].dataIndex].total)}` : ''
+                    },
+                    footerFont: { family: theme.font, size: 12, weight: '600' },
+                    footerColor: theme.tooltipInk
+                }
+            },
+            onClick: (event, elements) => {
+                if (!elements.length) return;
+                setMonth(monthData[elements[0].index].date);
+            },
+            scales: {
+                x: { stacked: true, grid: { display: false }, border: { color: theme.axis }, ticks: { color: theme.muted, maxRotation: 0, autoSkip: true } },
+                y: {
+                    stacked: true,
+                    beginAtZero: true,
+                    grid: { color: theme.grid, drawTicks: false },
+                    border: { display: false },
+                    ticks: { color: theme.muted, padding: 6, maxTicksLimit: 5, callback: value => `¥${formatCompactYen(value)}` }
+                }
+            }
         }
     });
 }
 
-function openItemDetails(item) {
-    const occurrences = Array.isArray(item.occurrences) ? [...item.occurrences] : [];
-    occurrences.sort((a, b) => new Date(b.date) - new Date(a.date));
-    const history = occurrences.length > 0
-        ? occurrences.map(entry => `
-            <div class="detail-history-row">
-                <span><strong>${escapeHtml(entry.store || '-')}</strong><br><span class="muted">${escapeHtml(formatDate(entry.date))}</span></span>
-                <span>${formatCurrency(Number(entry.price) || 0)} × ${entry.quantity || 1}</span>
-            </div>
-        `).join('')
-        : '<div class="detail-history-row">購入履歴がありません</div>';
+function renderMonthlyTable(monthData, series, valueOf) {
+    const container = document.getElementById('monthly-table');
+    container.innerHTML = `
+        <table class="data-table">
+            <thead><tr><th scope="col">月</th>${series.map(entry => `<th scope="col" class="num">${escapeHtml(entry.name)}</th>`).join('')}<th scope="col" class="num">合計</th></tr></thead>
+            <tbody>${monthData.slice().reverse().map(month => `
+                <tr>
+                    <th scope="row">${escapeHtml(formatMonthLabel(month.date))}</th>
+                    ${series.map(entry => `<td class="num">${formatCurrency(valueOf(month, entry.name))}</td>`).join('')}
+                    <td class="num"><strong>${formatCurrency(month.total)}</strong></td>
+                </tr>`).join('')}
+            </tbody>
+        </table>`;
+}
 
-    showDetailModal(`${item.name}の商品詳細`, `
-        <div class="detail-meta-grid">
-            <div class="detail-meta-card"><div class="detail-meta-label">カテゴリ</div><div class="detail-meta-value">${escapeHtml(item.category)}</div></div>
-            <div class="detail-meta-card"><div class="detail-meta-label">平均価格</div><div class="detail-meta-value">${formatCurrency(Number(item.avgPrice) || 0)}</div></div>
-            <div class="detail-meta-card"><div class="detail-meta-label">購入回数</div><div class="detail-meta-value">${item.count || 0}回</div></div>
+function renderStoreRanking() {
+    const container = document.getElementById('store-ranking');
+    const caption = document.getElementById('store-caption');
+    caption.textContent = formatMonthLabel(currentMonth);
+    const stores = new Map();
+    receiptsInMonth(currentMonth).forEach(entry => {
+        if (entryKind(entry) !== 'receipt') return;
+        const name = entry.store || '店名なし';
+        const current = stores.get(name) || { name, total: 0, visits: 0 };
+        current.total += entryTotal(entry);
+        current.visits += 1;
+        stores.set(name, current);
+    });
+    const ranked = [...stores.values()].sort((a, b) => b.total - a.total).slice(0, 8);
+    if (!ranked.length) {
+        container.innerHTML = '<p class="muted-copy">この月のレシートはまだありません。</p>';
+        return;
+    }
+    const max = ranked[0].total || 1;
+    container.innerHTML = ranked.map((store, index) => `
+        <div class="rank-row">
+            <span class="rank-num">${index + 1}</span>
+            <span class="rank-main">
+                <span class="rank-head"><span class="rank-name">${escapeHtml(store.name)}</span><span class="rank-value">${formatCurrency(store.total)}</span></span>
+                <span class="bar-track bar-track-thin"><span class="bar-fill" style="width:${store.total / max * 100}%;--bar:var(--c1)"></span></span>
+                <span class="rank-meta">${store.visits}回 · 1回あたり${formatCurrency(Math.round(store.total / store.visits))}</span>
+            </span>
+        </div>`).join('');
+}
+
+// ===== 品目と価格 =====
+function renderItemsPanel() {
+    const items = buildItemIndex();
+    const statsEl = document.getElementById('basket-stats');
+    const container = document.getElementById('items-container');
+    const categorySelect = document.getElementById('item-category-filter');
+    fillCategorySelect(categorySelect, { includeUnknown: [...new Set(items.map(item => item.category))] });
+
+    const repeated = items.filter(item => item.count >= 2 && item.change !== null);
+    const weight = repeated.reduce((sum, item) => sum + item.spend, 0);
+    const basket = weight ? repeated.reduce((sum, item) => sum + item.change * item.spend, 0) / weight : null;
+    const rises = significantMoves(items).filter(item => item.change > 0).length;
+    const falls = significantMoves(items).filter(item => item.change < 0).length;
+    statsEl.innerHTML = `
+        <div class="stat-tile">
+            <span class="stat-label">よく買う品の価格</span>
+            <strong class="stat-value">${basket === null ? '—' : formatPercent(basket)}</strong>
+            <span class="stat-note">${basket === null ? '同じ品を2回以上買うと計算します' : '最後に買った価格と、それまでの平均の比較'}</span>
         </div>
-        <div class="detail-section-title">購入履歴</div>
-        <div class="detail-history-list">${history}</div>
-    `);
+        <div class="stat-tile">
+            <span class="stat-label">値上がりした品</span>
+            <strong class="stat-value">${rises}<small>品</small></strong>
+            <span class="stat-note">3%以上の変化</span>
+        </div>
+        <div class="stat-tile">
+            <span class="stat-label">値下がりした品</span>
+            <strong class="stat-value">${falls}<small>品</small></strong>
+            <span class="stat-note">記録した品目 ${items.length}種類</span>
+        </div>`;
+
+    if (!items.length) {
+        container.innerHTML = emptyState({
+            iconName: 'tag',
+            title: '品目のデータはまだありません',
+            description: 'レシートを読み取ると、品目ごとの購入回数や価格の変化が分かるようになります。',
+            action: recordActionButton('レシートを読み取る')
+        });
+        return;
+    }
+
+    const query = document.getElementById('item-search').value.trim().toLowerCase();
+    const category = categorySelect.value;
+    const sort = document.getElementById('item-sort').value;
+    const sorters = {
+        count: (a, b) => b.count - a.count || b.spend - a.spend,
+        rise: (a, b) => (b.change ?? -Infinity) - (a.change ?? -Infinity),
+        spend: (a, b) => b.spend - a.spend,
+        recent: (a, b) => b.last.date - a.last.date
+    };
+    const filtered = items
+        .filter(item => (!query || item.name.toLowerCase().includes(query)) && (category === 'all' || item.category === category))
+        .sort(sorters[sort] || sorters.count);
+    if (!filtered.length) {
+        container.innerHTML = emptyState({ iconName: 'search', title: '条件に合う品目がありません' });
+        return;
+    }
+    container.innerHTML = filtered.slice(0, 200).map(item => {
+        const change = item.change !== null && Math.abs(item.change) >= 0.03 && Math.abs(item.changeYen) >= 5
+            ? `<span class="delta delta-${item.change > 0 ? 'up' : 'down'}">${icon(item.change > 0 ? 'arrow-up' : 'arrow-down')}${formatPercent(item.change)}</span>`
+            : (item.count >= 2 ? '<span class="delta delta-flat">ほぼ横ばい</span>' : '');
+        return `
+            <button type="button" class="item-row" data-item-name="${escapeHtml(item.name)}">
+                <span class="item-main">
+                    <span class="item-name">${escapeHtml(item.name)}</span>
+                    <span class="item-meta">${categoryDot(item.category)}${escapeHtml(item.category)}<span class="sep" aria-hidden="true">·</span>${item.count}回<span class="sep" aria-hidden="true">·</span>計${formatCurrency(item.spend)}</span>
+                </span>
+                <span class="item-side">
+                    <span class="item-price">${formatCurrency(item.lastUnit)}</span>
+                    ${change}
+                </span>
+            </button>`;
+    }).join('') + (filtered.length > 200 ? `<p class="muted-copy">上位200件を表示しています。検索で絞り込めます。</p>` : '');
+}
+
+function initAnalysisControls() {
+    document.querySelectorAll('[role="tab"][data-analysis-tab]').forEach(button => {
+        button.addEventListener('click', () => {
+            setAnalysisTab(button.dataset.analysisTab);
+            renderAnalysis();
+        });
+        button.addEventListener('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+            event.preventDefault();
+            const next = analysisTab === 'trend' ? 'items' : 'trend';
+            setAnalysisTab(next);
+            renderAnalysis();
+            document.querySelector(`[role="tab"][data-analysis-tab="${next}"]`)?.focus();
+        });
+    });
+    document.querySelectorAll('[data-trend-range]').forEach(button => {
+        button.addEventListener('click', () => {
+            trendRange = Number(button.dataset.trendRange) || 6;
+            document.querySelectorAll('[data-trend-range]').forEach(other => {
+                const active = other === button;
+                other.classList.toggle('is-active', active);
+                other.setAttribute('aria-pressed', String(active));
+            });
+            renderTrendPanel();
+        });
+    });
+    let timer = 0;
+    document.getElementById('item-search').addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(renderItemsPanel, 120);
+    });
+    document.getElementById('item-category-filter').addEventListener('change', renderItemsPanel);
+    document.getElementById('item-sort').addEventListener('change', renderItemsPanel);
+}
+
+function openItemDetail(name) {
+    const item = buildItemIndex().find(entry => entry.name === name);
+    if (!item) {
+        showToast('この品目の購入記録が見つかりませんでした', 'alert');
+        return;
+    }
+    const history = item.purchases.slice().reverse();
+    const changeText = item.change === null ? '1回だけ購入'
+        : `${formatCurrency(Math.round(item.previousAvg))}（それまでの平均）→ ${formatCurrency(item.lastUnit)}`;
+    const body = `
+        <div class="detail-hero">
+            <p class="detail-hero-label">${categoryDot(item.category)}${escapeHtml(item.category)}</p>
+            <p class="detail-hero-value">${formatCurrency(item.lastUnit)}<small> 最後に買った価格</small></p>
+            ${item.change !== null ? `<span class="delta delta-${item.change > 0 ? 'up' : (item.change < 0 ? 'down' : 'flat')}">${item.change ? icon(item.change > 0 ? 'arrow-up' : 'arrow-down') : ''}${formatPercent(item.change)} · ${escapeHtml(changeText)}</span>` : `<span class="muted-copy">${escapeHtml(changeText)}</span>`}
+        </div>
+        <div class="stat-row stat-row-compact">
+            <div class="stat-tile"><span class="stat-label">平均</span><strong class="stat-value">${formatCurrency(item.avgUnit)}</strong></div>
+            <div class="stat-tile"><span class="stat-label">最安</span><strong class="stat-value">${formatCurrency(item.minUnit)}</strong></div>
+            <div class="stat-tile"><span class="stat-label">最高</span><strong class="stat-value">${formatCurrency(item.maxUnit)}</strong></div>
+            <div class="stat-tile"><span class="stat-label">購入</span><strong class="stat-value">${item.count}<small>回</small></strong></div>
+        </div>
+        ${item.count >= 2 ? `
+        <h4 class="detail-section-title">価格の推移</h4>
+        <div class="chart-box chart-box-item"><canvas id="item-price-chart" role="img" aria-label="${escapeHtml(item.name)}の購入ごとの価格"></canvas></div>` : ''}
+        <h4 class="detail-section-title">購入履歴</h4>
+        <div class="table-scroll">
+            <table class="detail-items-table">
+                <thead><tr><th scope="col">日付</th><th scope="col">お店</th><th scope="col" class="num">単価</th><th scope="col" class="num">数量</th></tr></thead>
+                <tbody>${history.map(purchase => `
+                    <tr>
+                        <td>${escapeHtml(formatDate(purchase.date))}</td>
+                        <td>${escapeHtml(purchase.store || '—')}</td>
+                        <td class="num">${formatCurrency(purchase.unit)}</td>
+                        <td class="num">${purchase.quantity}</td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    showDetailModal(item.name, body, element => {
+        if (item.count >= 2) renderItemPriceChart(element.querySelector('#item-price-chart'), item);
+    }, [
+        { label: '閉じる', variant: 'secondary' },
+        { label: '品名・カテゴリを編集', icon: 'pencil', variant: 'primary', close: false, onClick: () => { openItemEditor(item); return false; } }
+    ]);
+}
+
+function renderItemPriceChart(canvas, item) {
+    destroyChart('item');
+    if (typeof Chart === 'undefined' || !canvas) return;
+    const theme = chartTheme();
+    const color = slotColor(window.KakeiboSettings.colorSlot(item.category));
+    charts.item = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: item.purchases.map(purchase => `${purchase.date.getMonth() + 1}/${purchase.date.getDate()}`),
+            datasets: [{
+                label: item.name,
+                data: item.purchases.map(purchase => purchase.unit),
+                borderColor: color,
+                backgroundColor: color,
+                borderWidth: 2,
+                pointRadius: 4,
+                pointHoverRadius: 6,
+                pointHitRadius: 14,
+                pointBorderColor: theme.surface,
+                pointBorderWidth: 2,
+                tension: 0
+            }]
+        },
+        plugins: [crosshairPlugin],
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    ...baseTooltip(theme),
+                    callbacks: {
+                        title: items => items.length ? formatDate(item.purchases[items[0].dataIndex].date) : '',
+                        label: entry => ` ${formatCurrency(entry.parsed.y)}  ${item.purchases[entry.dataIndex].store || ''}`
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { display: false }, border: { color: theme.axis }, ticks: { color: theme.muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 } },
+                y: {
+                    grid: { color: theme.grid, drawTicks: false },
+                    border: { display: false },
+                    grace: '15%',
+                    ticks: { color: theme.muted, padding: 6, maxTicksLimit: 4, callback: value => `¥${Math.round(value).toLocaleString('ja-JP')}` }
+                }
+            }
+        }
+    });
 }
 
 function openItemEditor(item) {
-    const categoryOptions = appData.categories.map(category => `
-        <option value="${escapeHtml(category.name)}" ${category.name === item.category ? 'selected' : ''}>${escapeHtml(category.name)}</option>
-    `).join('');
-
-    showDetailModal('商品マスタを編集', `
-        <form class="detail-edit-form" id="item-edit-form">
-            <div class="form-group">
-                <label for="detail-item-name">商品名</label>
-                <input class="form-input" id="detail-item-name" name="name" value="${escapeHtml(item.name)}" required>
-            </div>
-            <div class="form-group">
-                <label for="detail-item-category">カテゴリ</label>
-                <select class="form-input" id="detail-item-category" name="category">${categoryOptions}</select>
-            </div>
-            <div class="form-actions"><button class="btn btn-primary" type="submit">家計簿Dataへ保存</button></div>
-        </form>
-    `, body => {
-        body.querySelector('#item-edit-form')?.addEventListener('submit', async event => {
-            event.preventDefault();
-            const form = event.currentTarget;
-            const submitButton = form.querySelector('button[type="submit"]');
-            const name = form.elements.name.value.trim();
-            const category = form.elements.category.value;
-            if (!name) {
-                showToast('商品名を入力してください', '⚠️');
-                return;
-            }
-
-            submitButton.disabled = true;
-            submitButton.textContent = '保存中...';
-            try {
-                await window.KakeiboShared.requestJson('/items/master', {
-                    method: 'PATCH',
-                    body: JSON.stringify({ old_name: item.name, new_name: name, category })
-                });
-                await loadSharedData({ force: true });
-                closeDetailModal();
-                showToast(`${name}の商品情報を選択中の家計簿へ更新しました`);
-                navigateTo('items');
-            } catch (error) {
-                console.error('商品マスタ更新に失敗しました。', error);
-                showToast(error instanceof Error ? error.message : '商品マスタを更新できませんでした', '⚠️');
-                submitButton.disabled = false;
-                submitButton.textContent = '家計簿Dataへ保存';
-            }
-        });
-    });
-}
-
-function openItemTrend(itemName) {
-    navigateTo('trends');
-    const select = document.getElementById('trend-item-select');
-    if (!select) return;
-    select.value = itemName;
-    select.dispatchEvent(new Event('change'));
-}
-// ===== Empty State レンダラー =====
-function renderEmptyState(container, icon, title, description, showCTA = true) {
-    container.innerHTML = `
-        <div class="empty-state">
-            <div class="empty-state-icon">${icon}</div>
-            <h4 class="empty-state-title">${title}</h4>
-            <p class="empty-state-desc">${description}</p>
-            ${showCTA ? '<button class="btn btn-primary empty-state-cta" data-empty-cta>📷 レシートを撮影して始める</button>' : ''}
-        </div>
-    `;
-    if (showCTA) {
-        const ctaBtn = container.querySelector('[data-empty-cta]');
-        if (ctaBtn) {
-            ctaBtn.addEventListener('click', () => {
-                document.getElementById('btn-upload').click();
-            });
-        }
-    }
-}
-
-// ===== トースト通知 =====
-function showToast(message, icon = '✅') {
-    const container = document.getElementById('toast-container');
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.innerHTML = `<span class="toast-icon">${icon}</span><span>${message}</span>`;
-    container.appendChild(toast);
-    requestAnimationFrame(() => {
-        toast.classList.add('show');
-    });
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 500);
-    }, 3500);
-}
-
-// ===== カウンターアニメーション =====
-function animateCounter(element, targetValue, suffix = '', prefix = '') {
-    const duration = 800;
-    const start = performance.now();
-    function update(now) {
-        const elapsed = now - start;
-        const progress = Math.min(elapsed / duration, 1);
-        const eased = 1 - Math.pow(1 - progress, 3);
-        const currentValue = Math.round(targetValue * eased);
-        element.textContent = prefix + currentValue.toLocaleString('ja-JP') + suffix;
-        if (progress < 1) requestAnimationFrame(update);
-    }
-    requestAnimationFrame(update);
-}
-
-// ===== ページナビゲーション =====
-function navigateTo(page) {
-    currentPage = page;
-
-    document.querySelectorAll('.nav-item').forEach(item => {
-        item.classList.toggle('active', item.dataset.page === page);
-    });
-
-    document.querySelectorAll('.page').forEach(p => {
-        p.classList.toggle('active', p.id === `page-${page}`);
-    });
-
-    const titles = {
-        'dashboard': ['ダッシュボード', '支出サマリー'],
-        'receipts': ['レシート一覧', '全レシートの管理'],
-        'items': ['商品マスタ', '名寄せされた商品の管理'],
-        'trends': ['価格推移', '商品の価格変動をトラッキング'],
-        'settings': ['設定', 'アプリの設定']
-    };
-    document.getElementById('page-title').textContent = titles[page][0];
-    document.getElementById('page-subtitle').textContent = titles[page][1];
-
-    closeSidebar();
-
-    if (page === 'dashboard') initDashboard();
-    if (page === 'receipts') initReceiptsPage();
-    if (page === 'items') initItemsPage();
-    if (page === 'trends') initTrendsPage();
-    if (page === 'settings') initSettingsPage();
-}
-
-// ===== ハンバーガーメニュー =====
-function initHamburger() {
-    const btn = document.getElementById('hamburger-btn');
-    const sidebar = document.getElementById('sidebar');
-    const overlay = document.getElementById('sidebar-overlay');
-
-    btn.addEventListener('click', () => {
-        const isOpen = sidebar.classList.toggle('open');
-        overlay.classList.toggle('active', isOpen);
-        btn.classList.toggle('active', isOpen);
-    });
-
-    overlay.addEventListener('click', closeSidebar);
-}
-
-function closeSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    const overlay = document.getElementById('sidebar-overlay');
-    const btn = document.getElementById('hamburger-btn');
-    sidebar.classList.remove('open');
-    overlay.classList.remove('active');
-    btn.classList.remove('active');
-}
-
-// ===== 月別レシート取得 =====
-function getMonthReceipts() {
-    const year = currentMonth.getFullYear();
-    const month = currentMonth.getMonth();
-    return appData.receipts.filter(r => {
-        const d = new Date(r.date);
-        return d.getFullYear() === year && d.getMonth() === month;
-    });
-}
-
-// ===== ダッシュボード =====
-function initDashboard() {
-    const monthReceipts = getMonthReceipts();
-    const totalSpent = monthReceipts.reduce((s, r) => s + r.total, 0);
-    const totalItems = monthReceipts.reduce((s, r) => s + r.items.length, 0);
-
-    const kpiTotal = document.getElementById('kpi-total');
-    const kpiReceipts = document.getElementById('kpi-receipts');
-    const kpiItems = document.getElementById('kpi-items');
-    const kpiInflation = document.getElementById('kpi-inflation');
-
-    if (monthReceipts.length > 0) {
-        animateCounter(kpiTotal, totalSpent, '', '¥');
-        animateCounter(kpiReceipts, monthReceipts.length, '枚');
-        animateCounter(kpiItems, totalItems, '点');
-        kpiInflation.textContent = '--';
-        document.getElementById('kpi-total-change').textContent = '今月の合計';
-        document.getElementById('kpi-total-change').className = 'kpi-change';
-    } else {
-        kpiTotal.textContent = '¥0';
-        kpiReceipts.textContent = '0枚';
-        kpiItems.textContent = '0点';
-        kpiInflation.textContent = '--';
-        document.getElementById('kpi-total-change').textContent = 'データなし';
-    }
-
-    // カテゴリ別支出チャート
-    const categoryContainer = document.getElementById('category-chart-container');
-    if (monthReceipts.length === 0) {
-        categoryContainer.classList.add('is-empty');
-        const existingCanvas = document.getElementById('category-chart');
-        if (existingCanvas) existingCanvas.style.display = 'none';
-        if (!categoryContainer.querySelector('.empty-state')) {
-            const wrapper = document.createElement('div');
-            categoryContainer.insertBefore(wrapper, categoryContainer.firstChild);
-            renderEmptyState(wrapper, '📊', 'カテゴリデータなし', 'レシートを登録するとカテゴリ別支出が表示されます', false);
-        }
-    } else {
-        categoryContainer.classList.remove('is-empty');
-        const es = categoryContainer.querySelector('.empty-state');
-        if (es) es.parentElement.remove();
-        const canvas = document.getElementById('category-chart');
-        canvas.style.display = 'block';
-
-        const catTotals = {};
-        monthReceipts.forEach(r => {
-            r.items.forEach(item => {
-                const cat = item.category || 'その他';
-                catTotals[cat] = (catTotals[cat] || 0) + getItemLineTotal(item);
-            });
-        });
-
-        const catNames = Object.keys(catTotals);
-        const catAmounts = catNames.map(n => catTotals[n]);
-        const catColors = catNames.map(n => {
-            const found = appData.categories.find(c => c.name === n);
-            return found ? found.color : '#8893A5';
-        });
-
-        if (charts.category) charts.category.destroy();
-        charts.category = new Chart(document.getElementById('category-chart'), {
-            type: 'doughnut',
-            data: {
-                labels: catNames,
-                datasets: [{
-                    data: catAmounts,
-                    backgroundColor: catColors,
-                    borderWidth: 3,
-                    borderColor: '#fff',
-                    hoverBorderWidth: 0
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                cutout: '65%',
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: { padding: 16, usePointStyle: true, font: { family: 'Inter', size: 13 } }
-                    },
-                    tooltip: {
-                        backgroundColor: 'rgba(9,14,22,0.94)',
-                        padding: 12,
-                        titleFont: { family: 'Inter', size: 13 },
-                        bodyFont: { family: 'Inter', size: 13 },
-                        callbacks: {
-                            label: (ctx) => {
-                                const total = catAmounts.reduce((s, a) => s + a, 0);
-                                const pct = ((ctx.parsed / total) * 100).toFixed(1);
-                                return ` ${ctx.label}: ${formatCurrency(ctx.parsed)} (${pct}%)`;
-                            }
-                        }
-                    }
+    const names = buildItemIndex().map(entry => entry.name).filter(name => name !== item.name);
+    const options = categoryNames().map(name => `<option value="${escapeHtml(name)}" ${name === item.category ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
+    showDetailModal('品名・カテゴリを編集', `
+        <form class="stack-form" id="item-edit-form" novalidate>
+            <label class="field">
+                <span class="field-label">品名</span>
+                <input class="form-input" name="name" value="${escapeHtml(item.name)}" list="item-name-options" maxlength="300" required>
+                <datalist id="item-name-options">${names.slice(0, 300).map(name => `<option value="${escapeHtml(name)}"></option>`).join('')}</datalist>
+                <span class="field-help">すでにある品名にすると、同じ品としてまとめて集計します（表記ゆれの統合）。</span>
+            </label>
+            <label class="field">
+                <span class="field-label">カテゴリ</span>
+                <select class="form-input select-input" name="category">${options}</select>
+            </label>
+            <p class="field-help">これまでの${item.count}回分の記録がすべて変更されます。</p>
+        </form>`, null, [
+        { label: 'キャンセル', variant: 'secondary' },
+        {
+            label: '保存', variant: 'primary', close: false, onClick: async button => {
+                const form = document.getElementById('item-edit-form');
+                const name = form.elements.name.value.trim();
+                const category = form.elements.category.value;
+                if (!name) {
+                    showToast('品名を入力してください', 'alert');
+                    return false;
                 }
-            }
-        });
-    }
-
-    // 月次支出推移チャート
-    const monthlyContainer = document.getElementById('monthly-chart-container');
-    if (appData.receipts.length === 0) {
-        const existingCanvas = document.getElementById('monthly-chart');
-        if (existingCanvas) existingCanvas.style.display = 'none';
-        if (!monthlyContainer.querySelector('.empty-state')) {
-            const wrapper = document.createElement('div');
-            monthlyContainer.insertBefore(wrapper, monthlyContainer.firstChild);
-            renderEmptyState(wrapper, '📈', '月次データなし', 'データが蓄積されると支出推移が表示されます', false);
-        }
-    } else {
-        const es = monthlyContainer.querySelector('.empty-state');
-        if (es) es.parentElement.remove();
-        document.getElementById('monthly-chart').style.display = 'block';
-
-        const months = [];
-        for (let i = 5; i >= 0; i--) {
-            const d = new Date(currentMonth);
-            d.setMonth(d.getMonth() - i);
-            const yr = d.getFullYear();
-            const mo = d.getMonth();
-            const mr = appData.receipts.filter(r => {
-                const rd = new Date(r.date);
-                return rd.getFullYear() === yr && rd.getMonth() === mo;
-            });
-            months.push({
-                label: `${mo + 1}月`,
-                total: mr.reduce((s, r) => s + r.total, 0)
-            });
-        }
-
-        if (charts.monthly) charts.monthly.destroy();
-        charts.monthly = new Chart(document.getElementById('monthly-chart'), {
-            type: 'bar',
-            data: {
-                labels: months.map(m => m.label),
-                datasets: [{
-                    label: '支出',
-                    data: months.map(m => m.total),
-                    backgroundColor: 'rgba(209, 173, 103, 0.72)',
-                    hoverBackgroundColor: 'rgba(209, 173, 103, 0.94)',
-                    borderRadius: 8,
-                    borderSkipped: false
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: 'rgba(9,14,22,0.94)',
-                        padding: 12,
-                        titleFont: { family: 'Inter' },
-                        bodyFont: { family: 'Inter' },
-                        callbacks: { label: (ctx) => ` ${formatCurrency(ctx.parsed.y)}` }
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        grid: { color: 'rgba(209,173,103,0.10)' },
-                        ticks: { font: { family: 'Inter', size: 12 }, callback: (v) => '¥' + (v / 1000) + 'k' }
-                    },
-                    x: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 12 } } }
+                button.disabled = true;
+                try {
+                    await window.KakeiboShared.requestJson('/items/master', {
+                        method: 'PATCH',
+                        body: JSON.stringify({ old_name: item.name, new_name: name, category })
+                    });
+                    await loadSharedData({ force: true });
+                    showToast(names.includes(name) ? `「${item.name}」を「${name}」にまとめました` : `「${name}」を更新しました`);
+                    openItemDetail(name);
+                } catch (error) {
+                    showToast(error instanceof Error ? error.message : '品目を更新できませんでした', 'alert');
+                    button.disabled = false;
                 }
+                return false;
             }
-        });
-    }
-
-    // 最近のレシート
-    const recentContainer = document.getElementById('recent-receipts-container');
-    const tbody = document.querySelector('#recent-receipts-table tbody');
-    if (appData.receipts.length === 0) {
-        document.getElementById('recent-receipts-table').style.display = 'none';
-        if (!recentContainer.querySelector('.empty-state')) {
-            const wrapper = document.createElement('div');
-            recentContainer.appendChild(wrapper);
-            renderEmptyState(wrapper, '🧾', 'レシートがありません', '「レシートを撮影」ボタンから最初のレシートを登録しましょう', true);
         }
-    } else {
-        document.getElementById('recent-receipts-table').style.display = 'table';
-        const esWrapper = recentContainer.querySelector('.empty-state');
-        if (esWrapper) esWrapper.closest('div:not(#recent-receipts-container)').remove();
-
-        const sorted = [...appData.receipts].sort((a, b) => new Date(b.date) - new Date(a.date));
-        tbody.innerHTML = sorted.slice(0, 5).map(r => `
-            <tr>
-                <td class="recent-col-date">${formatDate(r.date)}</td>
-                <td class="recent-col-store">${escapeHtml(r.store)}</td>
-                <td class="recent-col-items">${r.items.length}点</td>
-                <td class="recent-col-total">${formatCurrency(r.total)}</td>
-                <td class="recent-col-status">${getStatusBadge(r.status)}</td>
-            </tr>
-        `).join('');
-    }
+    ]);
 }
 
-// ===== レシート一覧ページ =====
-function renderReceiptsTable(receipts) {
-    const tbody = document.querySelector('#receipts-table tbody');
-    tbody.innerHTML = receipts.map(r => `
-        <tr>
-            <td class="receipt-col-date">${formatDate(r.date)}</td>
-            <td class="receipt-col-store">${escapeHtml(r.store)}</td>
-            <td class="receipt-col-items">${r.items.length}点</td>
-            <td class="receipt-col-total">${formatCurrency(r.total)}</td>
-            <td class="receipt-col-confidence">
-                <div class="confidence-bar">
-                    <div class="confidence-fill" style="width:${r.confidence * 100}%"></div>
-                </div>
-            </td>
-            <td class="receipt-col-status">${getStatusBadge(r.status)}</td>
-            <td class="receipt-col-action">
-                <button class="btn btn-icon" data-receipt-action="detail" data-receipt-id="${escapeHtml(r.id)}" title="詳細">👁️</button>
-                <button class="btn btn-icon" data-receipt-action="edit" data-receipt-id="${escapeHtml(r.id)}" title="編集">✏️</button>
-            </td>
-        </tr>
-    `).join('');
-    tbody.querySelectorAll('[data-receipt-action]').forEach(button => {
-        button.addEventListener('click', () => {
-            const receipt = appData.receipts.find(item => String(item.id) === button.dataset.receiptId);
-            if (!receipt) return;
-            if (button.dataset.receiptAction === 'detail') openReceiptDetails(receipt);
-            if (button.dataset.receiptAction === 'edit' && typeof window.openReceiptEditor === 'function') {
-                window.openReceiptEditor(receipt);
-            }
-        });
-    });
 
-}
-
-function initReceiptsPage() {
-    const container = document.getElementById('receipts-container');
-    const table = document.getElementById('receipts-table');
-    const monthReceipts = getMonthReceipts();
-    const monthLabel = `${currentMonth.getFullYear()}年${currentMonth.getMonth() + 1}月`;
-
-    if (monthReceipts.length === 0) {
-        table.style.display = 'none';
-        table.querySelector('tbody').innerHTML = '';
-        const existingEmpty = container.querySelector('.empty-state');
-        if (existingEmpty) {
-            const wrapper = existingEmpty.parentElement;
-            if (wrapper) wrapper.remove();
-        }
-        const wrapper = document.createElement('div');
-        container.appendChild(wrapper);
-        const hasAnyReceipts = appData.receipts.length > 0;
-        renderEmptyState(
-            wrapper,
-            '🗓️',
-            `${monthLabel}のレシートはありません`,
-            hasAnyReceipts ? '上の月セレクターで別の月を選択してください' : '「レシートを撮影」からレシートを登録してください',
-            !hasAnyReceipts
-        );
-        return;
-    }
-
-    table.style.display = 'table';
-    const esWrapper = container.querySelector('.empty-state');
-    if (esWrapper) {
-        const wrapper = esWrapper.parentElement;
-        if (wrapper) wrapper.remove();
-    }
-
-    const searchInput = document.getElementById('receipt-search');
-    const filterSelect = document.getElementById('receipt-filter');
-    const newSearch = searchInput.cloneNode(true);
-    searchInput.parentNode.replaceChild(newSearch, searchInput);
-    const newFilter = filterSelect.cloneNode(true);
-    filterSelect.parentNode.replaceChild(newFilter, filterSelect);
-
-    function applyFilters() {
-        const query = document.getElementById('receipt-search').value.toLowerCase();
-        const statusFilter = document.getElementById('receipt-filter').value;
-        let filtered = getMonthReceipts();
-        if (query) filtered = filtered.filter(r => r.store.toLowerCase().includes(query));
-        if (statusFilter !== 'all') filtered = filtered.filter(r => r.status === statusFilter);
-        renderReceiptsTable(filtered);
-    }
-
-    document.getElementById('receipt-search').addEventListener('input', applyFilters);
-    document.getElementById('receipt-filter').addEventListener('change', applyFilters);
-    applyFilters();
-}
-// ===== 商品マスタページ =====
-function getUniqueItems() {
-    const itemMap = {};
-    appData.receipts.forEach(r => {
-        r.items.forEach(item => {
-            const key = item.name;
-            if (!itemMap[key]) {
-                itemMap[key] = { name: item.name, category: item.category, prices: [], count: 0, aliases: 1, occurrences: [] };
-            }
-            itemMap[key].prices.push(item.price);
-            itemMap[key].count++;
-            itemMap[key].occurrences.push({ receiptId: r.id, date: r.date, store: r.store, price: item.price, quantity: item.quantity || 1 });
-        });
-    });
-    return Object.values(itemMap).map(item => ({
-        ...item,
-        avgPrice: Math.round(item.prices.reduce((s, p) => s + p, 0) / item.prices.length)
-    }));
-}
-
-function renderItemsTable(items) {
-    const tbody = document.querySelector('#items-table tbody');
-    tbody.innerHTML = items.map((item, index) => `
-        <tr>
-            <td>${item.name}</td>
-            <td>${item.category}</td>
-            <td>${item.aliases}件</td>
-            <td>${formatCurrency(item.avgPrice)}</td>
-            <td>${item.count}回</td>
-            <td>
-                <button class="btn btn-icon" data-item-action="detail" data-item-index="${index}" title="詳細">👁️</button>
-                <button class="btn btn-icon" data-item-action="edit" data-item-index="${index}" title="編集">✏️</button>
-                <button class="btn btn-icon" data-item-action="trend" data-item-index="${index}" title="価格推移">📈</button>
-            </td>
-        </tr>
-    `).join('');
-    tbody.querySelectorAll('[data-item-action]').forEach(button => {
-        button.addEventListener('click', () => {
-            const item = items[Number(button.dataset.itemIndex)];
-            if (!item) return;
-            if (button.dataset.itemAction === 'detail') openItemDetails(item);
-            if (button.dataset.itemAction === 'edit') openItemEditor(item);
-            if (button.dataset.itemAction === 'trend') openItemTrend(item.name);
-        });
-    });
-}
-
-function initItemsPage() {
-    const container = document.getElementById('items-container');
-    const items = getUniqueItems();
-
-    if (items.length === 0) {
-        document.getElementById('items-table').style.display = 'none';
-        if (!container.querySelector('.empty-state')) {
-            const wrapper = document.createElement('div');
-            container.appendChild(wrapper);
-            renderEmptyState(wrapper, '🏷️', '商品データなし', 'レシートを登録すると商品マスタが自動生成されます', true);
-        }
-        return;
-    }
-
-    document.getElementById('items-table').style.display = 'table';
-    const esWrapper = container.querySelector('.empty-state');
-    if (esWrapper) esWrapper.closest('div:not(#items-container)').remove();
-
-    renderItemsTable(items);
-
-    const searchInput = document.getElementById('item-search');
-    const catFilter = document.getElementById('item-category-filter');
-    const newSearch = searchInput.cloneNode(true);
-    searchInput.parentNode.replaceChild(newSearch, searchInput);
-    const newCat = catFilter.cloneNode(true);
-    catFilter.parentNode.replaceChild(newCat, catFilter);
-
-    function applyFilters() {
-        const query = document.getElementById('item-search').value.toLowerCase();
-        const category = document.getElementById('item-category-filter').value;
-        let filtered = items;
-        if (query) filtered = filtered.filter(i => i.name.toLowerCase().includes(query));
-        if (category !== 'all') filtered = filtered.filter(i => i.category === category);
-        renderItemsTable(filtered);
-    }
-
-    document.getElementById('item-search').addEventListener('input', applyFilters);
-    document.getElementById('item-category-filter').addEventListener('change', applyFilters);
-}
-
-// ===== 価格推移ページ =====
-function initTrendsPage() {
-    const container = document.getElementById('trends-chart-container');
-    const select = document.getElementById('trend-item-select');
-    const items = getUniqueItems();
-
-    if (items.length === 0) {
-        document.getElementById('price-trend-chart').style.display = 'none';
-        if (!container.querySelector('.empty-state')) {
-            const wrapper = document.createElement('div');
-            container.insertBefore(wrapper, container.firstChild);
-            renderEmptyState(wrapper, '📉', '価格データなし', 'レシートを登録すると価格推移が表示されます', true);
-        }
-        document.getElementById('trend-stats').innerHTML = '';
-        return;
-    }
-
-    document.getElementById('price-trend-chart').style.display = 'block';
-    const es = container.querySelector('.empty-state');
-    if (es) es.parentElement.remove();
-
-    select.innerHTML = '<option value="">商品を選択...</option>' +
-        items.map(item => `<option value="${item.name}">${item.name}</option>`).join('');
-
-    const newSelect = select.cloneNode(true);
-    select.parentNode.replaceChild(newSelect, select);
-
-    document.getElementById('trend-item-select').addEventListener('change', (e) => {
-        const itemName = e.target.value;
-        if (!itemName) return;
-
-        const pricesByMonth = {};
-        appData.receipts.forEach(r => {
-            r.items.forEach(item => {
-                if (item.name === itemName) {
-                    const d = new Date(r.date);
-                    const key = `${d.getFullYear()}-${d.getMonth()}`;
-                    const label = `${d.getMonth() + 1}月`;
-                    if (!pricesByMonth[key]) pricesByMonth[key] = { label, prices: [], sortKey: d.getTime() };
-                    pricesByMonth[key].prices.push(item.price);
-                }
-            });
-        });
-
-        const sorted = Object.values(pricesByMonth).sort((a, b) => a.sortKey - b.sortKey);
-        const labels = sorted.map(s => s.label);
-        const avgPrices = sorted.map(s => Math.round(s.prices.reduce((a, b) => a + b, 0) / s.prices.length));
-
-        if (charts.trend) charts.trend.destroy();
-        charts.trend = new Chart(document.getElementById('price-trend-chart'), {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: itemName,
-                    data: avgPrices,
-                    borderColor: '#D1AD67',
-                    backgroundColor: 'rgba(209, 173, 103, 0.12)',
-                    fill: true,
-                    tension: 0.4,
-                    pointRadius: 6,
-                    pointBackgroundColor: '#D1AD67',
-                    pointBorderColor: '#fff',
-                    pointBorderWidth: 2,
-                    pointHoverRadius: 8
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: 'rgba(9,14,22,0.94)',
-                        padding: 12,
-                        callbacks: { label: (ctx) => ` ${formatCurrency(ctx.parsed.y)}` }
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: false,
-                        grid: { color: 'rgba(209,173,103,0.10)' },
-                        ticks: { font: { family: 'Inter' }, callback: (v) => '¥' + v }
-                    },
-                    x: { grid: { display: false }, ticks: { font: { family: 'Inter' } } }
-                }
-            }
-        });
-
-        if (avgPrices.length > 0) {
-            const first = avgPrices[0];
-            const last = avgPrices[avgPrices.length - 1];
-            const change = ((last - first) / first * 100).toFixed(1);
-            const avg = Math.round(avgPrices.reduce((s, p) => s + p, 0) / avgPrices.length);
-            const min = Math.min(...avgPrices);
-            const max = Math.max(...avgPrices);
-
-            document.getElementById('trend-stats').innerHTML = `
-                <div class="trend-stat">
-                    <div class="label">現在価格</div>
-                    <div class="value">${formatCurrency(last)}</div>
-                </div>
-                <div class="trend-stat">
-                    <div class="label">変動率</div>
-                    <div class="value" style="color:${change >= 0 ? '#F28B92' : '#62D8AD'}">
-                        ${change >= 0 ? '+' : ''}${change}%
-                    </div>
-                </div>
-                <div class="trend-stat">
-                    <div class="label">平均価格</div>
-                    <div class="value">${formatCurrency(avg)}</div>
-                </div>
-                <div class="trend-stat">
-                    <div class="label">価格帯</div>
-                    <div class="value">${formatCurrency(min)} - ${formatCurrency(max)}</div>
-                </div>
-            `;
-        }
-    });
-}
-
-// ===== 設定ページ =====
-function initSettingsPage() {
-    document.getElementById('category-settings').innerHTML =
-        appData.categories.map(cat => `
-            <div class="settings-item">
-                <span class="category-name">${cat.name}</span>
-                <div class="category-color" style="background:${cat.color}"></div>
-            </div>
-        `).join('');
+// ===== 設定 =====
+function renderSettings() {
+    renderAccountCard();
+    renderBudgetForm();
+    renderCategorySettings();
+    renderRecurringSettings();
+    renderThemeSwitch();
+    updateStorageStatus();
     window.KakeiboAccess?.load();
 }
 
-// ===== 月セレクター =====
-function initMonthSelector() {
-    const monthLabel = document.getElementById('current-month');
-
-    function updateMonth() {
-        monthLabel.textContent = `${currentMonth.getFullYear()}年${currentMonth.getMonth() + 1}月`;
-        if (currentPage === 'dashboard') initDashboard();
-        if (currentPage === 'receipts') initReceiptsPage();
+function renderAccountCard() {
+    const user = window.KakeiboAuth?.getUser?.();
+    const enabled = Boolean(window.KakeiboAuth?.enabled);
+    const name = document.getElementById('settings-user-name');
+    const email = document.getElementById('settings-user-email');
+    const avatar = document.getElementById('settings-avatar');
+    const signOut = document.getElementById('settings-sign-out');
+    name.textContent = user?.name || (enabled ? 'ログインしていません' : 'この端末で表示中');
+    email.textContent = [user?.email, user?.household?.name].filter(Boolean).join(' · ') || (enabled ? '' : 'ログインなしのローカル表示です');
+    avatar.textContent = (user?.name || user?.email || '家').trim().charAt(0).toUpperCase();
+    if (user?.picture) {
+        avatar.style.backgroundImage = `url("${String(user.picture).replace(/["\\]/g, '')}")`;
+        avatar.classList.add('has-image');
+    } else {
+        avatar.style.backgroundImage = '';
+        avatar.classList.remove('has-image');
     }
+    signOut.hidden = !enabled || !user;
+}
 
-    document.getElementById('prev-month').addEventListener('click', () => {
-        currentMonth.setMonth(currentMonth.getMonth() - 1);
-        updateMonth();
+function renderBudgetForm() {
+    const settings = window.KakeiboSettings.get();
+    const total = document.getElementById('budget-total');
+    if (document.activeElement !== total) total.value = settings.monthly_budget > 0 ? String(settings.monthly_budget) : '';
+    const sum = settings.categories.reduce((acc, category) => acc + category.budget, 0);
+    document.getElementById('budget-total-help').textContent = settings.monthly_budget > 0
+        ? `カテゴリ予算の合計は${formatCurrency(sum)}です。${sum > settings.monthly_budget ? '月の予算を超えています。' : ''}`
+        : `空欄にすると、カテゴリ予算の合計（いま${formatCurrency(sum)}）を月の予算にします。`;
+    const spent = {};
+    summarizeMonth(startOfMonth(new Date())).spentEntries.forEach(entry => {
+        Object.entries(categoryTotals(entry)).forEach(([name, value]) => { spent[name] = (spent[name] || 0) + value; });
     });
+    document.getElementById('budget-category-list').innerHTML = settings.categories.map((category, index) => `
+        <label class="budget-row">
+            <span class="budget-row-name">${categoryDot(category.name)}${escapeHtml(category.name)}</span>
+            <span class="budget-row-hint">今月 ${formatCurrency(spent[category.name] || 0)}</span>
+            <span class="money-input money-input-sm">
+                <span aria-hidden="true">¥</span>
+                <input class="form-input" type="number" inputmode="numeric" min="0" step="1000" data-budget-index="${index}" value="${category.budget > 0 ? category.budget : ''}" placeholder="なし" aria-label="${escapeHtml(category.name)}の予算">
+            </span>
+        </label>`).join('');
+}
 
-    document.getElementById('next-month').addEventListener('click', () => {
-        currentMonth.setMonth(currentMonth.getMonth() + 1);
-        updateMonth();
+async function saveBudgetForm(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const settings = window.KakeiboSettings.get();
+    settings.monthly_budget = Math.max(0, Math.round(Number(document.getElementById('budget-total').value) || 0));
+    form.querySelectorAll('[data-budget-index]').forEach(input => {
+        const category = settings.categories[Number(input.dataset.budgetIndex)];
+        if (category) category.budget = Math.max(0, Math.round(Number(input.value) || 0));
     });
+    button.disabled = true;
+    try {
+        await window.KakeiboSettings.save(settings);
+        showToast('予算を保存しました');
+        renderSettings();
+    } catch (error) {
+        showToast(error instanceof Error ? error.message : '予算を保存できませんでした', 'alert');
+    } finally {
+        button.disabled = false;
+    }
+}
 
-    updateMonth();
+function categoryUsage() {
+    const usage = {};
+    appData.receipts.forEach(receipt => (receipt.items || []).forEach(item => {
+        usage[item.category] = (usage[item.category] || 0) + 1;
+    }));
+    return usage;
+}
+
+function renderCategorySettings() {
+    const usage = categoryUsage();
+    const settings = window.KakeiboSettings.get();
+    document.getElementById('category-settings').innerHTML = settings.categories.map(category => {
+        const fixed = category.name === window.KakeiboSettings.FALLBACK_CATEGORY;
+        return `
+            <div class="settings-row">
+                <button type="button" class="swatch-button" data-category-color="${escapeHtml(category.name)}" aria-label="${escapeHtml(category.name)}の色を変更" style="--dot:var(--${category.color})"></button>
+                <span class="settings-row-main">
+                    <span class="settings-row-title">${escapeHtml(category.name)}</span>
+                    <span class="settings-row-meta">${usage[category.name] || 0}件の品目${category.budget ? ` · 予算 ${formatCurrency(category.budget)}` : ''}${fixed ? ' · 読み取りの受け皿として常に残ります' : ''}</span>
+                </span>
+                <span class="settings-row-actions">
+                    ${fixed ? '' : `
+                    <button type="button" class="btn btn-icon" data-category-rename="${escapeHtml(category.name)}" aria-label="${escapeHtml(category.name)}の名前を変更">${icon('pencil')}</button>
+                    <button type="button" class="btn btn-icon" data-category-delete="${escapeHtml(category.name)}" aria-label="${escapeHtml(category.name)}を削除">${icon('trash')}</button>`}
+                </span>
+            </div>`;
+    }).join('');
+}
+
+function colorPickerHtml(selected) {
+    return `<div class="swatch-grid" role="radiogroup" aria-label="色">${window.KakeiboSettings.COLOR_SLOTS.map(slot => `
+        <label class="swatch-option">
+            <input type="radio" name="color" value="${slot}" ${slot === selected ? 'checked' : ''}>
+            <span class="swatch" style="--dot:var(--${slot})" aria-hidden="true"></span>
+            <span class="visually-hidden">${slot === 'gray' ? 'グレー' : `色${slot.slice(1)}`}</span>
+        </label>`).join('')}</div>
+        <p class="field-help">色は見分けやすさを検証した9色から選べます。グラフでは名前も一緒に表示します。</p>`;
+}
+
+function openCategoryEditor(name = null) {
+    const settings = window.KakeiboSettings.get();
+    const existing = name ? settings.categories.find(category => category.name === name) : null;
+    const color = existing?.color || window.KakeiboSettings.nextColorSlot();
+    showDetailModal(existing ? 'カテゴリを編集' : 'カテゴリを追加', `
+        <form class="stack-form" id="category-form" novalidate>
+            <label class="field">
+                <span class="field-label">名前</span>
+                <input class="form-input" name="name" maxlength="40" value="${escapeHtml(existing?.name || '')}" placeholder="例: 子ども、ペット、医療" required>
+            </label>
+            <fieldset class="field">
+                <legend class="field-label">色</legend>
+                ${colorPickerHtml(color)}
+            </fieldset>
+            ${existing ? `<p class="field-help">名前を変えると、これまでの${categoryUsage()[existing.name] || 0}件の品目もまとめて変わります。</p>` : ''}
+        </form>`, body => body.querySelector('input[name="name"]')?.focus(), [
+        { label: 'キャンセル', variant: 'secondary' },
+        {
+            label: existing ? '保存' : '追加', variant: 'primary', close: false, onClick: async button => {
+                const form = document.getElementById('category-form');
+                const nextName = form.elements.name.value.trim();
+                const nextColor = form.querySelector('input[name="color"]:checked')?.value || color;
+                if (!nextName) { showToast('名前を入力してください', 'alert'); return false; }
+                const current = window.KakeiboSettings.get();
+                if ((!existing || nextName !== existing.name) && current.categories.some(category => category.name === nextName)) {
+                    showToast(`「${nextName}」はすでにあります。統合するには削除から移動先に選んでください`, 'alert');
+                    return false;
+                }
+                button.disabled = true;
+                try {
+                    if (existing && nextName !== existing.name) {
+                        const result = await window.KakeiboSettings.reassignCategory(existing.name, nextName, appData.receipts);
+                        await loadSharedData({ force: true });
+                        showToast(`「${existing.name}」を「${nextName}」に変更しました（${result.affected}件の記録）`);
+                    }
+                    const latest = window.KakeiboSettings.get();
+                    const target = latest.categories.find(category => category.name === (existing ? nextName : null));
+                    if (target) {
+                        target.color = nextColor;
+                    } else if (!existing) {
+                        const fallbackIndex = latest.categories.findIndex(category => category.name === window.KakeiboSettings.FALLBACK_CATEGORY);
+                        latest.categories.splice(fallbackIndex < 0 ? latest.categories.length : fallbackIndex, 0, { name: nextName, color: nextColor, budget: 0 });
+                    }
+                    await window.KakeiboSettings.save(latest);
+                    if (!existing) showToast(`「${nextName}」を追加しました`);
+                    closeDetailModal();
+                    renderSettings();
+                } catch (error) {
+                    showToast(error instanceof Error ? error.message : 'カテゴリを保存できませんでした', 'alert');
+                    button.disabled = false;
+                }
+                return false;
+            }
+        }
+    ]);
+}
+
+function openCategoryDelete(name) {
+    const settings = window.KakeiboSettings.get();
+    const count = categoryUsage()[name] || 0;
+    const targets = settings.categories.filter(category => category.name !== name);
+    showDetailModal(`「${name}」を削除`, `
+        <form class="stack-form" id="category-delete-form" novalidate>
+            <p class="detail-copy">${count ? `このカテゴリの品目${count}件と予算は、選んだカテゴリへ移します。` : 'このカテゴリを使っている記録はありません。'}</p>
+            <label class="field">
+                <span class="field-label">移動先</span>
+                <select class="form-input select-input" name="target">${targets.map(category => `<option value="${escapeHtml(category.name)}" ${category.name === window.KakeiboSettings.FALLBACK_CATEGORY ? 'selected' : ''}>${escapeHtml(category.name)}</option>`).join('')}</select>
+            </label>
+        </form>`, null, [
+        { label: 'キャンセル', variant: 'secondary' },
+        {
+            label: '削除する', icon: 'trash', variant: 'danger', close: false, onClick: async button => {
+                const target = document.getElementById('category-delete-form').elements.target.value;
+                button.disabled = true;
+                try {
+                    const result = await window.KakeiboSettings.reassignCategory(name, target, appData.receipts);
+                    await loadSharedData({ force: true });
+                    closeDetailModal();
+                    showToast(`「${name}」を削除し、${result.affected}件の記録を「${target}」へ移しました`, 'trash');
+                    renderSettings();
+                } catch (error) {
+                    showToast(error instanceof Error ? error.message : 'カテゴリを削除できませんでした', 'alert');
+                    button.disabled = false;
+                }
+                return false;
+            }
+        }
+    ]);
+}
+
+function renderRecurringSettings() {
+    const settings = window.KakeiboSettings.get();
+    const container = document.getElementById('recurring-settings');
+    if (!settings.recurring.length) {
+        container.innerHTML = '<p class="muted-copy">まだ登録されていません。家賃、通信費、サブスクなどを登録すると、毎月の支出に自動で入ります。</p>';
+        return;
+    }
+    const monthly = settings.recurring.filter(expense => !expense.end_month || expense.end_month >= monthKey(new Date()))
+        .reduce((sum, expense) => sum + expense.amount, 0);
+    container.innerHTML = `<p class="settings-summary">毎月の固定費 ${formatCurrency(monthly)}${settings.recurring.some(expense => !expense.amount) ? ' ＋ 毎月入力するもの' : ''}</p>` +
+        settings.recurring.map(expense => {
+            const ended = expense.end_month && expense.end_month < monthKey(new Date());
+            return `
+            <div class="settings-row${ended ? ' is-muted' : ''}">
+                <span class="settings-row-icon">${icon('repeat')}</span>
+                <span class="settings-row-main">
+                    <span class="settings-row-title">${escapeHtml(expense.name)}</span>
+                    <span class="settings-row-meta">${categoryDot(expense.category)}${escapeHtml(expense.category)} · 毎月${expense.day}日${expense.end_month ? ` · ${expense.end_month.replace('-', '年')}月まで` : ''}${ended ? '（終了）' : ''}</span>
+                </span>
+                <span class="settings-row-value">${expense.amount ? formatCurrency(expense.amount) : '毎月入力'}</span>
+                <span class="settings-row-actions">
+                    <button type="button" class="btn btn-icon" data-recurring-edit="${escapeHtml(expense.id)}" aria-label="${escapeHtml(expense.name)}を編集">${icon('pencil')}</button>
+                </span>
+            </div>`;
+        }).join('');
+}
+
+function openRecurringEditor(expense = null, preset = {}) {
+    const base = expense || {
+        id: window.KakeiboSettings.recurringId(),
+        name: preset.name || '',
+        amount: preset.amount || 0,
+        category: preset.category || '住居・光熱',
+        day: preset.day || new Date().getDate(),
+        start_month: preset.start_month || monthKey(new Date()),
+        end_month: '',
+        memo: ''
+    };
+    const categories = categoryNames();
+    if (!categories.includes(base.category)) base.category = categories[0] || 'その他';
+    showDetailModal(expense ? '固定費を編集' : '固定費を追加', `
+        <form class="stack-form" id="recurring-form" novalidate>
+            <label class="field">
+                <span class="field-label">名前</span>
+                <input class="form-input" name="name" maxlength="100" value="${escapeHtml(base.name)}" placeholder="例: 家賃、スマホ代、動画配信" required>
+            </label>
+            <label class="field">
+                <span class="field-label">金額</span>
+                <span class="money-input"><span aria-hidden="true">¥</span><input class="form-input" name="amount" type="number" inputmode="numeric" min="0" step="1" value="${base.amount || ''}" placeholder="毎月変わる場合は空欄"></span>
+                <span class="field-help">空欄にすると毎月の金額をホームで記録できます（電気代・ガス代など）。</span>
+            </label>
+            <div class="field-row">
+                <label class="field">
+                    <span class="field-label">カテゴリ</span>
+                    <select class="form-input select-input" name="category">${categories.map(name => `<option value="${escapeHtml(name)}" ${name === base.category ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select>
+                </label>
+                <label class="field">
+                    <span class="field-label">支払日</span>
+                    <select class="form-input select-input" name="day">${Array.from({ length: 31 }, (_, index) => index + 1).map(day => `<option value="${day}" ${day === base.day ? 'selected' : ''}>毎月${day}日${day === 31 ? '（月末）' : ''}</option>`).join('')}</select>
+                </label>
+            </div>
+            <div class="field-row">
+                <label class="field">
+                    <span class="field-label">開始月</span>
+                    <input class="form-input" name="start_month" type="month" value="${escapeHtml(base.start_month)}" required>
+                </label>
+                <label class="field">
+                    <span class="field-label">終了月</span>
+                    <input class="form-input" name="end_month" type="month" value="${escapeHtml(base.end_month)}">
+                    <span class="field-help">解約した場合などに入力</span>
+                </label>
+            </div>
+            <label class="field">
+                <span class="field-label">メモ</span>
+                <input class="form-input" name="memo" maxlength="200" value="${escapeHtml(base.memo)}" placeholder="任意">
+            </label>
+        </form>`, body => body.querySelector('input[name="name"]')?.focus(), [
+        ...(expense ? [{
+            label: '削除', icon: 'trash', variant: 'danger', close: false, onClick: async () => {
+                if (!window.confirm(`固定費「${expense.name}」を削除します。これまでに自動計上していた分も表示されなくなります。解約しただけなら終了月を入れてください。`)) return false;
+                const settings = window.KakeiboSettings.get();
+                settings.recurring = settings.recurring.filter(item => item.id !== expense.id);
+                try {
+                    await window.KakeiboSettings.save(settings);
+                    closeDetailModal();
+                    showToast(`「${expense.name}」を削除しました`, 'trash');
+                    renderCurrentPage();
+                } catch (error) {
+                    showToast(error instanceof Error ? error.message : '固定費を削除できませんでした', 'alert');
+                }
+                return false;
+            }
+        }] : [{ label: 'キャンセル', variant: 'secondary' }]),
+        {
+            label: '保存', variant: 'primary', close: false, onClick: async button => {
+                const form = document.getElementById('recurring-form');
+                const next = {
+                    id: base.id,
+                    name: form.elements.name.value.trim(),
+                    amount: Math.max(0, Math.round(Number(form.elements.amount.value) || 0)),
+                    category: form.elements.category.value,
+                    day: Number(form.elements.day.value) || 1,
+                    start_month: form.elements.start_month.value || monthKey(new Date()),
+                    end_month: form.elements.end_month.value || '',
+                    memo: form.elements.memo.value.trim()
+                };
+                if (!next.name) { showToast('名前を入力してください', 'alert'); return false; }
+                if (next.end_month && next.end_month < next.start_month) { showToast('終了月は開始月以降にしてください', 'alert'); return false; }
+                const settings = window.KakeiboSettings.get();
+                const index = settings.recurring.findIndex(item => item.id === next.id);
+                if (index >= 0) settings.recurring.splice(index, 1, next);
+                else settings.recurring.push(next);
+                button.disabled = true;
+                try {
+                    await window.KakeiboSettings.save(settings);
+                    closeDetailModal();
+                    showToast(`固定費「${next.name}」を保存しました`, 'repeat');
+                    renderCurrentPage();
+                } catch (error) {
+                    showToast(error instanceof Error ? error.message : '固定費を保存できませんでした', 'alert');
+                    button.disabled = false;
+                }
+                return false;
+            }
+        }
+    ]);
+}
+
+// ===== テーマ =====
+function currentThemeChoice() {
+    try {
+        const stored = localStorage.getItem(THEME_STORAGE_KEY);
+        return stored === 'light' || stored === 'dark' ? stored : 'auto';
+    } catch (_) {
+        return 'auto';
+    }
+}
+
+function applyTheme(choice) {
+    if (choice === 'light' || choice === 'dark') document.documentElement.dataset.theme = choice;
+    else delete document.documentElement.dataset.theme;
+    try {
+        if (choice === 'auto') localStorage.removeItem(THEME_STORAGE_KEY);
+        else localStorage.setItem(THEME_STORAGE_KEY, choice);
+    } catch (_) { /* 保存できなくても今回の表示には反映する */ }
+    renderThemeSwitch();
+    renderCurrentPage();
+}
+
+function renderThemeSwitch() {
+    const choice = currentThemeChoice();
+    document.querySelectorAll('[data-theme-choice]').forEach(button => {
+        const active = button.dataset.themeChoice === choice;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-checked', String(active));
+    });
+}
+
+// ===== 書き出し =====
+function csvCell(value) {
+    const text = String(value ?? '');
+    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function downloadCsv() {
+    const header = ['日付', '種類', 'お店・支払先', '品名', 'カテゴリ', '単価', '数量', '金額', 'メモ', '状態'];
+    const rows = [header];
+    sortByDateDesc(appData.receipts).forEach(receipt => {
+        const kind = { receipt: 'レシート', manual: '手入力', recurring: '固定費' }[entryKind(receipt)];
+        const date = formatDate(receipt.date);
+        (receipt.items.length ? receipt.items : [{ name: '', category: '', price: 0, quantity: 1, line_total: receipt.total }]).forEach(item => {
+            rows.push([date, kind, receipt.store, item.name, item.category, item.price, item.quantity, getItemLineTotal(item), receipt.memo || '', receipt.status]);
+        });
+    });
+    const csv = '\ufeff' + rows.map(row => row.map(csvCell).join(',')).join('\r\n');
+    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `kakeibo-${toInputDate(new Date())}.csv`);
+    showToast('CSVを書き出しました。Excelやスプレッドシートで開けます', 'download');
+}
+
+function downloadDataBackup() {
+    const blob = new Blob([JSON.stringify(makeDataSnapshot(), null, 2)], { type: 'application/json' });
+    downloadBlob(blob, `kakeibo-backup-${toInputDate(new Date())}.json`);
+    showToast('バックアップを書き出しました', 'download');
+}
+
+function initSettingsControls() {
+    document.getElementById('budget-form').addEventListener('submit', saveBudgetForm);
+    document.getElementById('btn-add-category').addEventListener('click', () => openCategoryEditor());
+    document.getElementById('btn-add-recurring').addEventListener('click', () => openRecurringEditor());
+    document.getElementById('category-settings').addEventListener('click', event => {
+        const rename = event.target.closest('[data-category-rename]');
+        const remove = event.target.closest('[data-category-delete]');
+        const color = event.target.closest('[data-category-color]');
+        if (rename) openCategoryEditor(rename.dataset.categoryRename);
+        if (remove) openCategoryDelete(remove.dataset.categoryDelete);
+        if (color) openCategoryEditor(color.dataset.categoryColor);
+    });
+    document.getElementById('recurring-settings').addEventListener('click', event => {
+        const button = event.target.closest('[data-recurring-edit]');
+        if (!button) return;
+        const expense = window.KakeiboSettings.get().recurring.find(item => item.id === button.dataset.recurringEdit);
+        if (expense) openRecurringEditor(expense);
+    });
+    document.querySelectorAll('[data-theme-choice]').forEach(button => {
+        button.addEventListener('click', () => applyTheme(button.dataset.themeChoice));
+    });
+    document.getElementById('settings-sign-out').addEventListener('click', () => document.getElementById('btn-sign-out')?.click());
+    document.getElementById('btn-export-csv').addEventListener('click', downloadCsv);
+    document.getElementById('btn-export-data').addEventListener('click', downloadDataBackup);
+    document.getElementById('btn-sync-data').addEventListener('click', () => loadSharedData({ announce: true, force: true }));
+}
+
+// ===== 手入力 =====
+const entryForm = { mode: 'new', entry: null, recurring: null, category: null };
+
+function renderEntryCategoryChips(selected) {
+    const container = document.getElementById('entry-category-chips');
+    const names = categoryNames();
+    if (selected && !names.includes(selected)) names.push(selected);
+    container.innerHTML = names.map(name => `
+        <label class="category-chip">
+            <input type="radio" name="entry-category" value="${escapeHtml(name)}" ${name === selected ? 'checked' : ''}>
+            <span>${categoryDot(name)}${escapeHtml(name)}</span>
+        </label>`).join('');
+}
+
+function parseAmount(text) {
+    const normalized = String(text || '').replace(/[０-９]/g, char => String.fromCharCode(char.charCodeAt(0) - 0xFEE0)).replace(/[^\d]/g, '');
+    return normalized ? Math.min(100000000, Number(normalized)) : 0;
+}
+
+// options: { entry } 既存の手入力を編集 / { recurring, date } 固定費の今月分 / { } 新規
+function openManualEntry(options = {}) {
+    const modal = document.getElementById('entry-modal');
+    const { entry = null, recurring = null } = options;
+    entryForm.mode = entry ? 'edit' : 'new';
+    entryForm.entry = entry;
+    entryForm.recurring = recurring;
+
+    const item = entry?.items?.[0];
+    const date = entry ? parseDate(entry.date) : (options.date ? parseDate(options.date) : new Date());
+    const isCurrentMonthView = isSameMonth(currentMonth, new Date());
+    const defaultDate = entry || options.date || isCurrentMonthView ? date : new Date(currentMonth.getFullYear(), currentMonth.getMonth(), Math.min(new Date().getDate(), daysInMonth(currentMonth)));
+
+    const lastManual = sortByDateDesc(appData.receipts.filter(receipt => entryKind(receipt) === 'manual'))[0];
+    const category = item?.category || recurring?.category || lastManual?.items?.[0]?.category || categoryNames()[0];
+    document.getElementById('entry-modal-title').textContent = entry ? '手入力の記録を編集' : (recurring ? `${recurring.name}を記録` : '手入力で記録');
+    document.getElementById('entry-amount').value = entry ? String(entryTotal(entry)) : (recurring?.amount ? String(recurring.amount) : '');
+    document.getElementById('entry-name').value = item?.name || recurring?.name || '';
+    document.getElementById('entry-store').value = entry && entry.store !== item?.name ? entry.store : '';
+    document.getElementById('entry-memo').value = entry?.memo || '';
+    document.getElementById('entry-date').value = toInputDate(defaultDate);
+    renderEntryCategoryChips(category);
+
+    const suggestions = [...new Set(appData.receipts.filter(receipt => entryKind(receipt) === 'manual').flatMap(receipt => (receipt.items || []).map(entryItem => entryItem.name)))].slice(0, 50);
+    document.getElementById('entry-name-suggestions').innerHTML = suggestions.map(name => `<option value="${escapeHtml(name)}"></option>`).join('');
+
+    const repeatField = document.getElementById('entry-repeat-field');
+    const repeat = document.getElementById('entry-repeat');
+    repeat.checked = false;
+    repeatField.hidden = Boolean(entry || recurring);
+    const note = document.getElementById('entry-recurring-note');
+    note.hidden = !recurring;
+    note.textContent = recurring
+        ? `固定費「${recurring.name}」の${formatMonthLabel(defaultDate)}分として記録します。${recurring.amount ? `設定している${formatCurrency(recurring.amount)}の代わりに、この金額で計上します。` : ''}`
+        : '';
+    document.getElementById('entry-delete').hidden = !entry;
+    document.getElementById('entry-save').textContent = entry ? '保存' : '記録する';
+    openOverlay(modal, { focus: '#entry-amount' });
+}
+
+function closeManualEntry() {
+    closeOverlay(document.getElementById('entry-modal'));
+}
+
+async function saveManualEntry(event) {
+    event.preventDefault();
+    const amount = parseAmount(document.getElementById('entry-amount').value);
+    const category = document.querySelector('input[name="entry-category"]:checked')?.value || 'その他';
+    const name = document.getElementById('entry-name').value.trim() || category;
+    const store = document.getElementById('entry-store').value.trim();
+    const memo = document.getElementById('entry-memo').value.trim();
+    const dateValue = document.getElementById('entry-date').value;
+    if (!amount) {
+        showToast('金額を入力してください', 'alert');
+        document.getElementById('entry-amount').focus();
+        return;
+    }
+    if (!dateValue) {
+        showToast('日付を入力してください', 'alert');
+        return;
+    }
+    const [y, m, d] = dateValue.split('-').map(Number);
+    const existingTime = entryForm.entry ? parseDate(entryForm.entry.date) : null;
+    const date = new Date(y, m - 1, d, existingTime ? existingTime.getHours() : 12, existingTime ? existingTime.getMinutes() : 0);
+    const editing = entryForm.mode === 'edit' && entryForm.entry;
+    const repeat = !editing && !entryForm.recurring && document.getElementById('entry-repeat').checked;
+    const recurringId = entryForm.recurring?.id || entryForm.entry?.recurring_id || window.KakeiboSettings.linkedRecurringId(entryForm.entry)
+        || (repeat ? window.KakeiboSettings.recurringId() : '');
+    const body = {
+        date: window.KakeiboSettings.localIso(date),
+        store: store || name,
+        // 古いサーバーでも固定費との対応が分かるよう、source_filenameにも保存する。
+        source_filename: recurringId ? `recurring:${recurringId}` : '',
+        image_storage: null,
+        items: [{ name, price: amount, quantity: 1, category, line_total: amount }],
+        total: amount,
+        confidence: 1,
+        status: 'manual',
+        entry_type: 'manual',
+        memo,
+        recurring_id: recurringId
+    };
+    const save = document.getElementById('entry-save');
+    save.disabled = true;
+    try {
+        const payload = await window.KakeiboShared.requestJson(editing ? `/receipts/${encodeURIComponent(entryForm.entry.id)}` : '/receipts', {
+            method: editing ? 'PUT' : 'POST',
+            body: JSON.stringify(body)
+        });
+        const saved = normalizePersistedReceipt({ ...body, ...payload.receipt }, appData.receipts.length);
+        if (editing) {
+            const index = appData.receipts.findIndex(receipt => String(receipt.id) === String(entryForm.entry.id));
+            if (index >= 0) appData.receipts.splice(index, 1, saved);
+        } else {
+            appData.receipts.push(saved);
+        }
+        if (repeat) {
+            // 今回の記録をその月の分として固定費に結びつけ、翌月以降は自動で計上する。
+            const settings = window.KakeiboSettings.get();
+            settings.recurring.push({
+                id: recurringId,
+                name,
+                amount,
+                category,
+                day: d,
+                start_month: monthKey(date),
+                end_month: '',
+                memo
+            });
+            await window.KakeiboSettings.save(settings).catch(error => showToast(error instanceof Error ? error.message : '固定費を保存できませんでした', 'alert'));
+        }
+        lastSharedSyncAt = Date.now();
+        updateStorageStatus();
+        closeManualEntry();
+        const entryDate = startOfMonth(date);
+        if (!isSameMonth(entryDate, currentMonth)) setMonth(entryDate);
+        else renderCurrentPage();
+        showToast(editing ? `「${name}」を更新しました` : `${formatCurrency(amount)}（${name}）を記録しました`);
+    } catch (error) {
+        showToast(error instanceof Error ? error.message : '記録できませんでした', 'alert');
+    } finally {
+        save.disabled = false;
+    }
+}
+
+function initManualEntry() {
+    const modal = document.getElementById('entry-modal');
+    document.getElementById('entry-form').addEventListener('submit', saveManualEntry);
+    document.getElementById('entry-close').addEventListener('click', closeManualEntry);
+    document.getElementById('entry-cancel').addEventListener('click', closeManualEntry);
+    modal.addEventListener('click', event => { if (event.target === modal) closeManualEntry(); });
+    document.getElementById('entry-delete').addEventListener('click', async () => {
+        if (entryForm.entry && await deleteEntry(entryForm.entry)) closeManualEntry();
+    });
+    // 3桁区切りで表示する。日本語入力の変換中に値を書き換えると数字が二重に入るため、確定後に整える。
+    const amount = document.getElementById('entry-amount');
+    const formatAmount = () => {
+        const value = parseAmount(amount.value);
+        const formatted = value ? value.toLocaleString('ja-JP') : '';
+        if (amount.value !== formatted) amount.value = formatted;
+    };
+    amount.addEventListener('input', event => {
+        if (event.isComposing) return;
+        formatAmount();
+    });
+    amount.addEventListener('compositionend', formatAmount);
+    amount.addEventListener('blur', formatAmount);
+    document.getElementById('btn-manual-entry').addEventListener('click', () => openManualEntry());
+}
+
+// ===== 記録の入口（スマホの＋ボタン） =====
+function uploadBlocked() {
+    const upload = document.getElementById('btn-upload');
+    return upload?.dataset.billingBlocked === 'true' ? (upload.title || 'AI読み取りの利用上限に達しています') : '';
+}
+
+function openRecordSheet() {
+    const sheet = document.getElementById('record-sheet');
+    const blocked = uploadBlocked();
+    sheet.querySelectorAll('[data-record="camera"], [data-record="gallery"]').forEach(button => { button.disabled = Boolean(blocked); });
+    const note = document.getElementById('record-sheet-note');
+    note.hidden = !blocked;
+    note.textContent = blocked ? `${blocked}。手入力は使えます。` : '';
+    openOverlay(sheet);
+}
+
+function initRecordSheet() {
+    const sheet = document.getElementById('record-sheet');
+    document.getElementById('btn-record').addEventListener('click', openRecordSheet);
+    sheet.addEventListener('click', event => {
+        if (event.target === sheet || event.target.closest('[data-close-sheet]')) {
+            closeOverlay(sheet);
+            return;
+        }
+        const option = event.target.closest('[data-record]');
+        if (!option || option.disabled) return;
+        closeOverlay(sheet, { silent: true });
+        const action = option.dataset.record;
+        // ファイル選択はタップ操作の中で直接開く必要がある。
+        if (action === 'camera') window.KakeiboUpload?.openCamera();
+        if (action === 'gallery') window.KakeiboUpload?.openGallery();
+        if (action === 'manual') openManualEntry();
+    });
 }
 
 // ===== レシート画像の拡大表示（ピンチ・ダブルタップ・ホイール対応） =====
@@ -1273,14 +2774,15 @@ function initUploadModal() {
     reviewItems = [];
 
     // モーダルを開く
-    document.getElementById('btn-upload').addEventListener('click', () => {
-        modal.classList.add('active');
+    function openUploadModal() {
+        if (!modal.classList.contains('active')) openOverlay(modal, { focus: '#btn-open-camera' });
         goToStep(1);
-    });
+    }
+    document.getElementById('btn-upload').addEventListener('click', openUploadModal);
 
     // モーダルを閉じる
     function closeModal() {
-        modal.classList.remove('active');
+        closeOverlay(modal, { silent: true });
         resetModal();
     }
 
@@ -1308,8 +2810,8 @@ function initUploadModal() {
             lastSharedSyncAt = Date.now();
             closeModal();
             updateStorageStatus();
-            showToast(`${removed.store || 'レシート'}のレシートを家計簿Dataから破棄しました`, '✓');
-            navigateTo('receipts');
+            showToast(`${removed.store || 'レシート'}の記録を削除しました`, 'trash');
+            renderCurrentPage();
         } catch (error) {
             console.error('共有レシートの削除に失敗しました。', error);
             showToast(error instanceof Error ? error.message : 'レシートを削除できませんでした', '⚠️');
@@ -1850,8 +3352,8 @@ function initUploadModal() {
                 <td class="col-qty" data-label="数量"><input type="number" value="${item.quantity}" class="review-item-qty" data-index="${index}" min="1"></td>
                 <td class="col-category" data-label="カテゴリ">
                     <select class="review-item-category" data-index="${index}">
-                        ${appData.categories.map(c =>
-                            `<option value="${c.name}" ${c.name === item.category ? 'selected' : ''}>${c.name}</option>`
+                        ${[...new Set([...categoryNames(), item.category].filter(Boolean))].map(name =>
+                            `<option value="${escapeHtml(name)}" ${name === item.category ? 'selected' : ''}>${escapeHtml(name)}</option>`
                         ).join('')}
                     </select>
                 </td>
@@ -1948,7 +3450,7 @@ function initUploadModal() {
             name: '',
             price: 0,
             quantity: 1,
-            category: '食費'
+            category: categoryNames()[0] || 'その他'
         });
         renderReviewItems();
         const lastInput = document.querySelector('#review-items-body tr:last-child .review-item-name');
@@ -2003,8 +3505,8 @@ function initUploadModal() {
                 editingReceiptId = null;
                 closeModal();
                 updateStorageStatus();
-                showToast(`${store}のレシートを選択中の家計簿へ更新しました`);
-                navigateTo('receipts');
+                showToast(`${store}のレシートを更新しました`);
+                renderCurrentPage();
                 return;
             }
 
@@ -2021,20 +3523,22 @@ function initUploadModal() {
                 currentReviewIndex += 1;
                 showReviewForm(reviewQueue[currentReviewIndex]);
                 approveBtn.disabled = false;
-                approveBtn.textContent = '✓ 承認して登録';
-                showToast(`${store}のレシートを共有登録しました。次のレシートを確認してください`);
+                approveBtn.textContent = '承認して登録';
+                showToast(`${store}のレシートを登録しました。次のレシートを確認してください`);
                 return;
             }
 
             const totalRegistered = registeredReceiptCount;
             closeModal();
-            showToast(`${totalRegistered}件のレシートを選択中の家計簿へ登録しました`);
-            navigateTo(currentPage);
+            showToast(`${totalRegistered}件のレシートを登録しました`);
+            const firstDate = parseDate(receipt.date);
+            if (isValidDate(firstDate) && !isSameMonth(firstDate, currentMonth)) setMonth(firstDate);
+            else renderCurrentPage();
         } catch (error) {
             console.error('共有レシートの保存に失敗しました。', error);
             showToast(error instanceof Error ? error.message : '共有レシートを保存できませんでした', '⚠️');
             approveBtn.disabled = false;
-            approveBtn.textContent = editingReceiptId ? '✓ 更新を保存' : '✓ 承認して登録';
+            approveBtn.textContent = editingReceiptId ? '更新を保存' : '承認して登録';
         }
     });
 
@@ -2048,7 +3552,7 @@ function initUploadModal() {
         clearSelectedFiles();
         reviewItems = [];
         editingReceiptId = null;
-        approveBtn.textContent = '✓ 承認して登録';
+        approveBtn.textContent = '承認して登録';
         approveBtn.disabled = false;
         cancelBtn.disabled = false;
         reviewQueue = [];
@@ -2083,49 +3587,150 @@ function initUploadModal() {
         reviewQueue = [draft];
         currentReviewIndex = 0;
         registeredReceiptCount = 0;
-        modal.classList.add('active');
+        if (!modal.classList.contains('active')) openOverlay(modal);
         goToStep(3);
         document.getElementById('modal-title').textContent = 'レシートを編集';
-        approveBtn.textContent = '✓ 更新を保存';
+        approveBtn.textContent = '更新を保存';
         showReviewForm(draft);
         loadStoredReceiptImage(draft);
     };
+
+    // スマホの記録シートから、撮影・写真選択を直接開く。
+    window.KakeiboUpload = {
+        open: openUploadModal,
+        openCamera() {
+            openUploadModal();
+            cameraInput.value = '';
+            cameraInput.click();
+        },
+        openGallery() {
+            openUploadModal();
+            galleryInput.value = '';
+            galleryInput.click();
+        },
+        openLightbox: (src, label) => imageLightbox.open(src, label)
+    };
 }
 
-// ===== 初期化 =====
-document.addEventListener('DOMContentLoaded', () => {
-    initDataSafety();
 
-    window.addEventListener('kakeibo:authenticated', () => loadSharedData({ force: true }));
-    window.addEventListener('kakeibo:signed-out', clearInMemoryData);
-    window.addEventListener('focus', refreshSharedDataIfStale);
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) refreshSharedDataIfStale();
+// ===== 画面全体のクリック操作 =====
+function initGlobalActions() {
+    document.addEventListener('click', event => {
+        const record = event.target.closest('[data-action="open-record"]');
+        if (record) {
+            event.preventDefault();
+            // スマホ、またはAI読み取りが上限で使えないときは、手入力も選べるシートを出す。
+            if (window.matchMedia('(max-width: 899px)').matches || uploadBlocked()) openRecordSheet();
+            else window.KakeiboUpload?.open();
+            return;
+        }
+        const entryButton = event.target.closest('[data-entry-id]');
+        if (entryButton) {
+            openEntryDetails(findEntry(entryButton.dataset.entryId));
+            return;
+        }
+        const itemButton = event.target.closest('[data-item-name]');
+        if (itemButton && !itemButton.closest('#detail-modal')) {
+            openItemDetail(itemButton.dataset.itemName);
+            return;
+        }
+        const settingsLink = event.target.closest('[data-open-settings]');
+        if (settingsLink) {
+            navigateTo('settings');
+            requestAnimationFrame(() => document.getElementById(`settings-${settingsLink.dataset.openSettings}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+            return;
+        }
+        const categoryBar = event.target.closest('[data-history-category]');
+        if (categoryBar) {
+            historyFilter = 'all';
+            document.getElementById('receipt-search').value = '';
+            navigateTo('receipts');
+            const select = document.getElementById('history-category-filter');
+            fillCategorySelect(select, { includeUnknown: [categoryBar.dataset.historyCategory] });
+            select.value = categoryBar.dataset.historyCategory;
+            renderHistory();
+            return;
+        }
+        const historyFilterButton = event.target.closest('[data-history-filter]');
+        if (historyFilterButton) {
+            historyFilter = historyFilterButton.dataset.historyFilter;
+            renderHistory();
+            return;
+        }
+        const pendingButton = event.target.closest('[data-record-recurring]');
+        if (pendingButton) {
+            const expense = window.KakeiboSettings.get().recurring.find(item => item.id === pendingButton.dataset.recordRecurring);
+            if (expense) openManualEntry({ recurring: expense, date: pendingButton.dataset.recordDate });
+            return;
+        }
+        const pageLink = event.target.closest('[data-page-link]');
+        if (pageLink) {
+            event.preventDefault();
+            if (pageLink.dataset.analysisTab) analysisTab = pageLink.dataset.analysisTab;
+            navigateTo(pageLink.dataset.pageLink);
+            refreshSharedDataIfStale();
+        }
     });
 
-    // ナビゲーション
     document.querySelectorAll('.nav-item').forEach(item => {
-        item.addEventListener('click', (event) => {
+        item.addEventListener('click', event => {
             event.preventDefault();
             navigateTo(item.dataset.page);
             refreshSharedDataIfStale();
         });
     });
-
-    // ページリンク
-    document.querySelectorAll('[data-page-link]').forEach(link => {
-        link.addEventListener('click', (event) => {
-            event.preventDefault();
-            navigateTo(link.dataset.pageLink);
-            refreshSharedDataIfStale();
-        });
+    window.addEventListener('hashchange', () => {
+        const page = pageFromHash();
+        if (page && page !== currentPage) navigateTo(page, { updateHash: false });
     });
+}
 
-    initHamburger();
-    initDashboard();
-    initDetailModal();
-    initUploadModal();
+let renderQueued = false;
+function queueRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+        renderQueued = false;
+        renderCurrentPage();
+    });
+}
+
+// ===== 初期化 =====
+document.addEventListener('DOMContentLoaded', () => {
+    clearLegacyLocalData();
+
+    window.addEventListener('kakeibo:authenticated', () => {
+        navigateTo(currentPage, { updateHash: false });
+        loadSharedData({ force: true });
+    });
+    window.addEventListener('kakeibo:signed-out', clearInMemoryData);
+    window.addEventListener('kakeibo:settings-changed', () => {
+        updateSyncBanner();
+        queueRender();
+    });
+    window.addEventListener('focus', refreshSharedDataIfStale);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) refreshSharedDataIfStale();
+    });
+    // 端末のテーマが変わったらグラフの色を描き直す。
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+        if (currentThemeChoice() === 'auto') queueRender();
+    });
+    // 画面幅が変わってスマホ表示とPC表示が切り替わったときも描き直す。
+    window.matchMedia('(max-width: 899px)').addEventListener?.('change', queueRender);
+
+    initGlobalActions();
     initMonthSelector();
+    initHistoryControls();
+    initAnalysisControls();
+    initSettingsControls();
+    initDetailModal();
+    initManualEntry();
+    initRecordSheet();
+    initUploadModal();
+
+    navigateTo(pageFromHash() || 'dashboard', { updateHash: true });
+    updateStorageStatus();
 
     if (!window.KakeiboAuth?.enabled || window.KakeiboAuth.getToken()) {
         loadSharedData({ force: true });

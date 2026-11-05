@@ -29,6 +29,11 @@
             navBadge.textContent = String(total);
             navBadge.hidden = total === 0;
         }
+        const tabBadge = document.getElementById('admin-tab-request-count');
+        if (tabBadge) {
+            tabBadge.textContent = String(total);
+            tabBadge.hidden = total === 0;
+        }
     }
 
     function renderMembers(payload) {
